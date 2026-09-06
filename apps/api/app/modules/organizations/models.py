@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from app.db.base import Base, created_at, updated_at, uuid_pk
 
@@ -56,3 +56,23 @@ class UserSession(Base):
     created_at = created_at()
 
     __table_args__ = (Index("ix_user_sessions_user_id", "user_id"),)
+
+
+class OrgSettings(Base):
+    """Per-organization configuration edited in the Settings screen.
+
+    Holds people-search provider selection + API keys and the outbound-calling safety flag.
+    `provider_keys` is a JSON map {provider_key: api_key}; these are secrets and are stored
+    server-side only — the API never returns the raw key values, only which providers are
+    configured. One row per organization.
+    """
+
+    __tablename__ = "org_settings"
+
+    id = uuid_pk()
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, unique=True)
+    default_people_search_provider = Column(Text)
+    provider_keys = Column(JSONB, nullable=False, server_default="{}")
+    hunar_live_calls_enabled = Column(Boolean, nullable=False, server_default="false")
+    created_at = created_at()
+    updated_at = updated_at()

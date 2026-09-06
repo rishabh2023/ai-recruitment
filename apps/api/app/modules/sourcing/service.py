@@ -38,6 +38,7 @@ from app.integrations.people_search.registry import (
 )
 from app.modules.audit.log import write_audit
 from app.modules.candidates.models import Candidate, JobCandidate
+from app.modules.organizations.settings_service import SettingsService
 from app.modules.candidates.service import CandidateService
 from app.modules.jobs.models import Job, JobVersion
 
@@ -141,7 +142,8 @@ class SourcingService:
         fabricated data for a failed lookup."""
         requested = (requested_provider or "").lower() or None
         try:
-            provider = get_people_search_provider(requested, env=provider_env_from_settings())
+            env = SettingsService(self._s).provider_env(job.org_id)
+            provider = get_people_search_provider(requested or env.get("PEOPLE_SEARCH_PROVIDER"), env=env)
         except ValueError as exc:
             raise SourcingProviderError(str(exc), provider=requested or "default") from exc
         try:
@@ -215,7 +217,7 @@ class SourcingService:
     def _run_enrichment(self, job: Job, provider_key: str, source_id: str, full_name: str | None):
         """Enrich via the real provider the candidate was sourced from. No fallback."""
         try:
-            provider = get_people_search_provider(provider_key, env=provider_env_from_settings())
+            provider = get_people_search_provider(provider_key, env=SettingsService(self._s).provider_env(job.org_id))
         except ValueError as exc:
             raise SourcingProviderError(str(exc), provider=provider_key or "default") from exc
         try:

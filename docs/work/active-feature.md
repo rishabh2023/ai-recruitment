@@ -39,6 +39,37 @@ This file is the resume point for any agent. Keep it current.
   422. **Full suite 83 passed.** Web typecheck + production build pass. Browser-verified end
   to end on localhost:3000: login → Sourcing → JD-prefill → search (sample notice) → empty
   state → broaden → 9 results → select all → "7 added · 2 skipped (already in pipeline)".
+## Settings module + real multi-provider sourcing, done this session
+
+- **Real multi-provider people search:** real adapters for Apollo (existing), **PDL, Proxycurl,
+  Coresignal** (new, `app/integrations/people_search/`), all behind `PeopleSearchProvider`
+  (`search()` + `enrich()`). **Sample data removed from the product flow** — it is no longer an
+  automatic fallback and is not offered in the UI (kept only for tests/local dev when
+  explicitly selected). A provider that is unconfigured/plan-gated/failing now raises
+  `SourcingProviderError` → HTTP **502** with the real reason (e.g. "Apollo.io search failed:
+  requires a paid plan (HTTP 403)"); never fabricated data.
+- **Provider selection:** `GET /jobs/{id}/sourcing/providers`; the Sourcing UI has a provider
+  dropdown (only real providers; unconfigured shown disabled with a Settings hint); search
+  accepts a `provider` override.
+- **Settings module (`/settings`, admin-managed):** new `org_settings` table
+  (migration `c2d3e4f5a6b7`, org-scoped), `SettingsService`, and `GET/PUT /settings`.
+  Admins set **per-provider API keys** (write-only — never returned, only a `configured`
+  flag), the **default provider**, and the **live outbound-calling toggle**; the page also
+  lists the team. Keys resolve org-first then `.env`, so a key saved in Settings takes effect
+  immediately (search + enrichment + `configured_providers` all read the org-merged env). The
+  live-calling toggle now gates real Hunar dialing (`_live_calls_ready` reads the org flag).
+  Non-admins get a read-only view (PUT → 403). Settings nav item enabled.
+- **Verification:** `tests/test_settings.py` (5) + updated sourcing tests. **Full suite 91
+  passed.** Web typecheck passes. Browser-verified: Settings renders providers (Apollo
+  configured via env, others not), default selector, live-calling toggle, team; Sourcing
+  provider dropdown + honest 502 error shown for plan-gated Apollo.
+- **To get real search results:** an admin pastes a working key in Settings (recommended:
+  a free **People Data Labs** key — single-endpoint search returns full profiles). Apollo's
+  provided key is Free-plan and returns 403 for Search (confirmed live).
+- Note: demo user `recruiter@demo.test` is created as a recruiter by `dev/bootstrap`; promote
+  to admin (`UPDATE users SET role='admin' …`) or use "Create account" (first user = admin) to
+  edit Settings.
+
 ## Sourcing Phase 4 — enrichment + outreach, done this session
 
 - **Enrichment:** `POST /job-candidates/{id}/enrich` (`SourcingService.enrich`) reveals a

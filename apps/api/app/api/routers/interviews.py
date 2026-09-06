@@ -28,8 +28,16 @@ router = APIRouter(tags=["interviews"])
 _RETRYABLE_RUN_STATES = {StageRunState.FAILED.value, StageRunState.CANCELLED.value}
 
 
-def _live_calls_ready() -> bool:
-    return settings.hunar_live_calls_enabled and bool(settings.hunar_api_key)
+def _live_calls_ready(session: Session | None = None, org_id=None) -> bool:
+    """Live dialing needs a Hunar key AND the calling switch on — enabled either by the org's
+    Settings toggle or the process-level flag."""
+    if not settings.hunar_api_key:
+        return False
+    if session is not None and org_id is not None:
+        from app.modules.organizations.settings_service import SettingsService
+
+        return SettingsService(session).live_calls_enabled(org_id)
+    return settings.hunar_live_calls_enabled
 
 
 @router.post("/job-candidates/{jc_id}/launch", response_model=LaunchOut, status_code=201)
@@ -77,7 +85,7 @@ def launch(jc_id: UUID, session: Session = Depends(get_session), principal: Prin
         )
 
     dispatched = False
-    if _live_calls_ready():
+    if _live_calls_ready(session, job.org_id):
         # Persist the intent (QUEUED call + AWAITING_RESULT run) BEFORE dispatching, so the
         # task (eager or a real worker) sees a committed row. Then enqueue the real call.
         call_id = call.id
@@ -108,7 +116,7 @@ def sync_call_status(call_id: UUID, session: Session = Depends(get_session), pri
     job = session.get(Job, jc.job_id) if jc else None
     if job is None or job.org_id != principal.org_id:
         raise DomainError("Call not found.", code="not_found", status_code=404)
-    if not _live_calls_ready():
+    if not _live_calls_ready(session, job.org_id):
         raise DomainError("Live Hunar calls are not enabled.", code="conflict", status_code=409)
     if not call.hunar_call_id:
         raise DomainError("This call has no Hunar call id yet.", code="conflict", status_code=409)

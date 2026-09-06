@@ -144,6 +144,11 @@ export const api = {
   enrichCandidate: (jcId: string) =>
     req<EnrichResult>(`/job-candidates/${jcId}/enrich`, { method: "POST" }),
 
+  // settings (org-scoped config)
+  getSettings: () => req<Settings>("/settings"),
+  updateSettings: (patch: SettingsUpdate) =>
+    req<Settings>("/settings", { method: "PUT", body: JSON.stringify(patch) }),
+
   syncCall: (callId: string) =>
     req<{ call_id: string; normalized_status: string | null; vendor_status: string | null; hunar_call_id: string | null }>(
       `/calls/${callId}/sync`,
@@ -255,6 +260,20 @@ export type PeopleSearchResult = {
   has_more: boolean;
   suggested_query: PeopleSearchInput;
   candidates: ExternalCandidate[];
+};
+export type SettingsUser = { id: string; name: string | null; email: string; role: string };
+export type Settings = {
+  org_name: string;
+  is_admin: boolean;
+  default_provider: string | null;
+  providers: ProviderOption[];
+  live_calls_enabled: boolean;
+  users: SettingsUser[];
+};
+export type SettingsUpdate = {
+  default_provider?: string | null;
+  live_calls_enabled?: boolean;
+  provider_keys?: Record<string, string>;
 };
 export type EnrichResult = {
   phone: string | null;

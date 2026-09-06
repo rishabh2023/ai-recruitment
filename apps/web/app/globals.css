@@ -223,3 +223,16 @@ ul.activity time { font-size: 12px; white-space: nowrap; }
 }
 .sourcing-provider-row { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
 .sourcing-provider-row .field-hint { margin: 0; align-self: center; }
+/* --- Settings --- */
+.settings-page { max-width: 900px; padding-top: 40px; padding-bottom: 64px; }
+.settings-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+.settings-card-head h2 { margin: 0 0 4px; font-size: 18px; }
+.settings-card-head p { margin: 0 0 14px; }
+.settings-providers { display: grid; gap: 10px; }
+.settings-provider { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; padding: 12px; background: #0f1117; border: 1px solid var(--border); border-radius: 10px; }
+.settings-provider-key { display: flex; gap: 8px; align-items: center; flex: 1; min-width: 260px; max-width: 460px; }
+.settings-provider-key input { flex: 1; }
+.settings-row { display: flex; align-items: flex-end; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+.settings-inline { margin: 0; max-width: 320px; flex: 1; }
+.settings-team { width: 100%; margin-top: 4px; }
+@media (max-width: 760px) { .settings-page { padding: 24px 16px 42px; } .settings-provider { align-items: stretch; } }

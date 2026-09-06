@@ -302,6 +302,30 @@ class SourceCandidatesOut(BaseModel):
     job_candidate_ids: list[UUID]
 
 
+# --- settings ---
+class SettingsUserOut(BaseModel):
+    id: UUID
+    name: str | None
+    email: str
+    role: str
+
+
+class SettingsOut(BaseModel):
+    org_name: str
+    is_admin: bool  # whether the current user may edit settings
+    default_provider: str | None
+    providers: list[ProviderOption]  # configured reflects org keys + env
+    live_calls_enabled: bool
+    users: list[SettingsUserOut]
+
+
+class SettingsUpdateIn(BaseModel):
+    default_provider: str | None = None
+    live_calls_enabled: bool | None = None
+    # provider -> api key. Non-empty sets/replaces; empty string clears. Never echoed back.
+    provider_keys: dict[str, str] | None = None
+
+
 class EnrichOut(BaseModel):
     phone: str | None
     email: str | None

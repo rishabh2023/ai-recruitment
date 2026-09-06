@@ -26,7 +26,6 @@ from app.api.schemas import (
     SourceCandidatesIn,
     SourceCandidatesOut,
 )
-from app.config import settings
 from app.db.session import get_session
 from app.integrations.people_search.base import ExternalCandidate, PeopleSearchQuery
 from app.integrations.people_search.registry import (
@@ -35,8 +34,9 @@ from app.integrations.people_search.registry import (
     configured_providers,
 )
 from app.modules.jobs.models import Job
+from app.modules.organizations.settings_service import SettingsService
 from app.modules.sourcing import SourcingProviderError, SourcingService
-from app.modules.sourcing.service import SourceCandidateInput, provider_env_from_settings
+from app.modules.sourcing.service import SourceCandidateInput
 
 router = APIRouter(prefix="/jobs/{job_id}/sourcing", tags=["sourcing"])
 
@@ -71,14 +71,15 @@ def providers(job_id: UUID, session: Session = Depends(get_session), principal: 
     The UI offers only real providers; unconfigured ones are shown disabled so an admin knows
     to add a key in Settings. No sample/demo provider is offered here."""
     _job_or_404(session, principal, job_id)
-    usable = set(configured_providers(provider_env_from_settings()))
+    svc = SettingsService(session, principal.user_id)
+    env = svc.provider_env(principal.org_id)
+    usable = set(configured_providers(env))
     opts = [
         ProviderOption(key=k, label=PROVIDER_LABELS.get(k, k), configured=k in usable)
         for k in KNOWN_PROVIDERS
     ]
-    default = settings.people_search_provider if settings.people_search_provider in usable else (
-        next(iter(usable), None)
-    )
+    configured_default = svc.default_provider(principal.org_id)
+    default = configured_default if configured_default in usable else next(iter(usable), None)
     return ProvidersOut(default=default, providers=opts)
 
 
@@ -103,7 +104,7 @@ def search(job_id: UUID, body: PeopleSearchIn, session: Session = Depends(get_se
         seniorities=[s for s in body.seniorities if s.strip()],
         page=body.page, page_size=body.page_size,
     )
-    requested = body.provider or settings.people_search_provider
+    requested = body.provider or SettingsService(session, principal.user_id).default_provider(principal.org_id)
     try:
         outcome = SourcingService(session, principal.user_id).search(job, query, requested)
     except SourcingProviderError as exc:

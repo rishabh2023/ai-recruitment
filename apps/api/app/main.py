@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.errors import install_error_handlers
-from app.api.routers import auth, candidates, dashboard, interviews, jobs, sourcing, system, webhooks
+from app.api.routers import auth, candidates, dashboard, interviews, jobs, settings as settings_router, sourcing, system, webhooks
 from app.config import settings
 
 
@@ -29,6 +29,7 @@ def create_app() -> FastAPI:
     app.include_router(jobs.router)
     app.include_router(candidates.router)
     app.include_router(sourcing.router)
+    app.include_router(settings_router.router)
     app.include_router(interviews.router)
     app.include_router(webhooks.router)
     return app
