@@ -64,11 +64,13 @@ class PdlProvider:
         params = {"pdl_id": source_id, "pretty": "false"}
         payload = self._get(ENRICH_PATH, params)
         person = payload.get("data") or {}
+        # PDL gates contact fields on plan; absent values come back as boolean `true` — coerce
+        # anything that isn't a real string to None so we never present a flag as a number/email.
         return EnrichmentResult(
             source="pdl",
             source_id=source_id,
-            phone=_first(person.get("phone_numbers")) or person.get("mobile_phone"),
-            email=_first(person.get("emails"), key="address") or person.get("work_email"),
+            phone=_str(_first(person.get("phone_numbers"))) or _str(person.get("mobile_phone")),
+            email=_str(_first(person.get("emails"), key="address")) or _str(person.get("work_email")),
             raw=person,
         )
 

@@ -295,6 +295,91 @@ def enrich_candidate(job_candidate_id: str) -> dict:
     return _call("POST", f"/job-candidates/{job_candidate_id}/enrich")
 
 
+@mcp.tool()
+def source_and_outreach(
+    job_id: str,
+    provider: str | None = None,
+    titles: list[str] | None = None,
+    locations: list[str] | None = None,
+    seniorities: list[str] | None = None,
+    skills: list[str] | None = None,
+    keywords: list[str] | None = None,
+    count: int = 3,
+    enrich: bool = True,
+    launch: bool = True,
+) -> dict:
+    """One-shot Flow B: search a provider, add the top `count` results to the job pipeline,
+    then (optionally) enrich each new candidate's contact and launch their outreach call.
+
+    This is a convenience macro over people_search → add_sourced_candidates → enrich_candidate
+    → launch_stage. It is resilient: a per-candidate enrich/launch failure (e.g. the provider
+    can't reveal a phone, or live calling is off) is captured in that candidate's result and
+    does not abort the others. Nothing here bypasses platform gates — enrichment still needs a
+    working provider, and a real call is placed only when live calling is enabled.
+
+    Returns a summary: the provider used, how many were added/skipped, and per-candidate steps
+    (added → enriched? → outreach launched? with phone/status or the error encountered)."""
+    if count < 1 or count > 25:
+        raise ApiError("count must be between 1 and 25.")
+
+    search = _call("POST", f"/jobs/{job_id}/sourcing/search", json={
+        "provider": provider, "titles": titles or [], "locations": locations or [],
+        "seniorities": seniorities or [], "skills": skills or [], "keywords": keywords or [],
+        "page": 1, "page_size": count,
+    })
+    picked = search.get("candidates", [])[:count]
+    if not picked:
+        return {
+            "provider": search.get("provider"), "found": 0, "added": 0, "skipped": 0,
+            "candidates": [], "note": "No candidates matched the search — broaden the filters.",
+        }
+
+    add = _call("POST", f"/jobs/{job_id}/sourcing/add", json={"candidates": picked})
+    new_ids = add.get("job_candidate_ids", [])
+
+    # Map new job-candidate ids back to their profiles (in add order) for a readable summary.
+    results: list[dict] = []
+    for jc_id, profile in zip(new_ids, picked):
+        step: dict[str, Any] = {
+            "job_candidate_id": jc_id,
+            "name": profile.get("full_name"),
+            "title": profile.get("title"),
+            "added": True,
+            "enriched": None,
+            "phone": None,
+            "outreach": None,
+        }
+        if enrich:
+            try:
+                e = _call("POST", f"/job-candidates/{jc_id}/enrich")
+                step["enriched"] = True
+                step["phone"] = e.get("phone")
+            except ApiError as exc:
+                step["enriched"] = False
+                step["enrich_error"] = str(exc)
+        if launch and step.get("phone"):
+            try:
+                r = _call("POST", f"/job-candidates/{jc_id}/launch")
+                step["outreach"] = {
+                    "dispatched": r.get("dispatched"),
+                    "status": r.get("normalized_status"),
+                }
+            except ApiError as exc:
+                step["outreach"] = {"error": str(exc)}
+        elif launch and not step.get("phone"):
+            step["outreach"] = {"skipped": "no phone (enrichment did not reveal one)"}
+        results.append(step)
+
+    return {
+        "provider": search.get("provider"),
+        "is_sample": search.get("is_sample"),
+        "found": len(search.get("candidates", [])),
+        "added": add.get("added"),
+        "skipped": add.get("skipped"),
+        "candidates": results,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Settings (admin)
 # ---------------------------------------------------------------------------
