@@ -39,6 +39,26 @@ This file is the resume point for any agent. Keep it current.
   422. **Full suite 83 passed.** Web typecheck + production build pass. Browser-verified end
   to end on localhost:3000: login → Sourcing → JD-prefill → search (sample notice) → empty
   state → broaden → 9 results → select all → "7 added · 2 skipped (already in pipeline)".
+## MCP server (conversational access), done this session
+
+- **`apps/mcp/`** — a Model Context Protocol server exposing the platform as **27 tools** so it
+  can be driven from Claude Code / ChatGPT / any MCP client. Thin wrappers over the FastAPI
+  backend (business rules, gates, auth, audit preserved); assistant works in product concepts
+  only. Tools cover context/dashboard, jobs+workflow (create → JD → confirm → draft → approve →
+  activate, calling policy), candidates+pipeline (import, timeline, decide, launch, sync),
+  sourcing (providers, suggested query, people_search, add, enrich), and admin settings.
+- **Auth:** signs in once with `RECRUIT_EMAIL`/`RECRUIT_PASSWORD`, reuses the session cookie,
+  auto-relogin on 401. **Transports:** stdio (default; Claude Code) and streamable-http
+  (`MCP_TRANSPORT=streamable-http`, endpoint `/mcp`; ChatGPT connectors, needs a tunnel).
+- **SDK note:** built on `mcp` **2.x** (`from mcp.server.mcpserver import MCPServer` — FastMCP
+  was renamed). Its own venv `apps/mcp/.venv` (git-ignored). Root **`.mcp.json`** registers it
+  for Claude Code in this repo. See `apps/mcp/README.md`.
+- **Verified live** (backend on :8000, demo admin): `whoami`, `dashboard_summary`,
+  `create_job` + `add_job_description` (JD extracted), `list_people_search_providers`
+  (apollo+pdl configured), and a **real PDL `people_search` → `add_sourced_candidates`**
+  (real people incl. a Google backend engineer → pipeline SOURCED) — all through MCP tools.
+  streamable-http boots and serves `/mcp`.
+
 ## Settings module + real multi-provider sourcing, done this session
 
 - **Real multi-provider people search:** real adapters for Apollo (existing), **PDL, Proxycurl,

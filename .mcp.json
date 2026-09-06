@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "ai-recruitment": {
+      "command": "/Users/rishabh/Desktop/AI-Recuitment-Workflow/apps/mcp/.venv/bin/python",
+      "args": ["/Users/rishabh/Desktop/AI-Recuitment-Workflow/apps/mcp/server.py"],
+      "env": {
+        "RECRUIT_API_URL": "http://localhost:8000",
+        "RECRUIT_EMAIL": "recruiter@demo.test",
+        "RECRUIT_PASSWORD": "demo-password"
+      }
+    }
+  }
+}
