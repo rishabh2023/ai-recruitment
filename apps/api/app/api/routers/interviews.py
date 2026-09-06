@@ -65,6 +65,17 @@ def launch(jc_id: UUID, session: Session = Depends(get_session), principal: Prin
     except InterviewLaunchError as exc:
         raise DomainError(str(exc), code="conflict", status_code=409)
 
+    # Flow B: launching the outreach call marks a sourced candidate as CONTACTED (audited).
+    if jc.pipeline_state in ("SOURCED", "OUTREACH_PENDING"):
+        from app.modules.audit.log import write_audit
+
+        jc.pipeline_state = "CONTACTED"
+        write_audit(
+            session, org_id=job.org_id, actor_user_id=principal.user_id,
+            action="sourcing.outreach_launched", entity_type="job_candidate",
+            entity_id=jc.id, to_state="CONTACTED",
+        )
+
     dispatched = False
     if _live_calls_ready():
         # Persist the intent (QUEUED call + AWAITING_RESULT run) BEFORE dispatching, so the

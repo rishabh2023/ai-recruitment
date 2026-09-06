@@ -39,9 +39,26 @@ This file is the resume point for any agent. Keep it current.
   422. **Full suite 83 passed.** Web typecheck + production build pass. Browser-verified end
   to end on localhost:3000: login → Sourcing → JD-prefill → search (sample notice) → empty
   state → broaden → 9 results → select all → "7 added · 2 skipped (already in pipeline)".
-- **Not built (next):** contact enrichment (Apollo `/people/match` async webhook) + outreach
-  call launch for SOURCED candidates (Phase 4); live Apollo once a paid/scoped key exists
-  (flip `PEOPLE_SEARCH_PROVIDER=apollo` + `APOLLO_API_KEY`).
+## Sourcing Phase 4 — enrichment + outreach, done this session
+
+- **Enrichment:** `POST /job-candidates/{id}/enrich` (`SourcingService.enrich`) reveals a
+  sourced candidate's phone/email so an outreach call can be placed. Provider boundary gained
+  `EnrichmentResult` + `enrich()`. The `sample` provider returns a deterministic, reserved
+  test number (`+1-555-01xx`, `example.com` email) — never a real person. Apollo's `enrich`
+  raises (its phone reveal is async via `/people/match` webhook + paid plan), so the service
+  **degrades to the flagged sample contact** rather than failing. Writes phone/email to the
+  Candidate + facts (provenance), moves `SOURCED → OUTREACH_PENDING`, audited. Idempotent.
+- **Outreach:** reuses the existing `POST /job-candidates/{id}/launch` (Hunar dispatch); the
+  launch endpoint now moves a `SOURCED`/`OUTREACH_PENDING` candidate to `CONTACTED` (audited).
+- **Web:** candidate detail page shows **Enrich contact** when no phone, then **Start outreach
+  call** (disabled until enriched); notice shows the revealed number and sample flag.
+  `lib/api.ts` gains `enrichCandidate` + `EnrichResult`.
+- **Verification:** `tests/test_sourcing.py` now 7 (enrich→outreach→CONTACTED, idempotent
+  enrich, provider-unavailable→sample fallback). **Full suite 85 passed.** Web typecheck +
+  build pass. Browser-verified end to end: SOURCED → enrich (`+1-555-1001`, OUTREACH_PENDING)
+  → outreach (CONTACTED, call attempt, FAILED on the non-routable sample number → Retry).
+- **Next (Phase 4b):** real Apollo enrichment via the async `/people/match` webhook once a
+  paid/scoped key exists; until then the sample fallback keeps outreach demonstrable.
 
 ## Job hub — workflow + pipeline UI (done this session)
 

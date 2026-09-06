@@ -288,3 +288,14 @@ class SourceCandidatesOut(BaseModel):
     added: int
     skipped: int  # duplicates or invalid rows not added
     job_candidate_ids: list[UUID]
+
+
+class EnrichOut(BaseModel):
+    phone: str | None
+    email: str | None
+    provider: str
+    requested_provider: str
+    is_sample: bool
+    already_had_contact: bool
+    notice: str | None
+    pipeline_state: str | None

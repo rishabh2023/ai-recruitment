@@ -124,3 +124,67 @@ def test_add_requires_selection(client):
     h = _auth(client)
     jid = _job_with_jd(client, h)
     assert client.post(f"/jobs/{jid}/sourcing/add", json={"candidates": []}, headers=h).status_code == 422
+
+
+def _job_with_ai_workflow(client, h):
+    """Job with a confirmed JD and an approved workflow whose first stage is AI (launchable)."""
+    jid = _job_with_jd(client, h)
+    wf = client.post(f"/jobs/{jid}/workflow/draft", headers=h).json()
+    stages = {"stages": [
+        {"name": "Outreach / Screening", "execution_type": "ai", "information_requirements": ["interest"], "criteria": []},
+        {"name": "Recruiter Review", "execution_type": "human", "requires_human_approval": True},
+    ]}
+    client.put(f"/jobs/{jid}/workflow/versions/{wf['id']}/stages", json=stages, headers=h)
+    client.post(f"/jobs/{jid}/workflow/versions/{wf['id']}/approve", headers=h)
+    return jid
+
+
+def _source_one(client, h, jid):
+    found = client.post(f"/jobs/{jid}/sourcing/search", json={}, headers=h).json()["candidates"][0]
+    client.post(f"/jobs/{jid}/sourcing/add", json={"candidates": [found]}, headers=h)
+    return client.get(f"/jobs/{jid}/candidates", headers=h).json()[0]["id"]
+
+
+def test_enrich_sample_then_outreach(client):
+    h = _auth(client)
+    jid = _job_with_ai_workflow(client, h)
+    jc_id = _source_one(client, h, jid)
+
+    # Sourced candidate has no phone yet.
+    tl = client.get(f"/job-candidates/{jc_id}/timeline", headers=h).json()
+    assert tl["candidate"]["phone"] is None
+
+    # Enrich reveals a (sample) contact and moves the candidate to OUTREACH_PENDING.
+    r = client.post(f"/job-candidates/{jc_id}/enrich", headers=h)
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["phone"] and body["is_sample"] is True
+    assert body["already_had_contact"] is False
+    assert body["pipeline_state"] == "OUTREACH_PENDING"
+
+    # Idempotent: enriching again reports the existing contact.
+    again = client.post(f"/job-candidates/{jc_id}/enrich", headers=h).json()
+    assert again["already_had_contact"] is True and again["phone"] == body["phone"]
+
+    # Outreach: launching the AI stage now succeeds and marks the candidate CONTACTED.
+    launch = client.post(f"/job-candidates/{jc_id}/launch", headers=h)
+    assert launch.status_code == 201, launch.text
+    state = client.get(f"/jobs/{jid}/candidates", headers=h).json()[0]["pipeline_state"]
+    assert state == "CONTACTED"
+
+
+def test_enrich_falls_back_when_provider_unavailable(client):
+    """A candidate sourced from a real provider (apollo) with no working key/plan enriches via
+    the flagged sample fallback rather than failing."""
+    h = _auth(client)
+    jid = _job_with_ai_workflow(client, h)
+    client.post(
+        f"/jobs/{jid}/sourcing/add",
+        json={"candidates": [{"source": "apollo", "source_id": "apollo-xyz", "full_name": "Real Person"}]},
+        headers=h,
+    )
+    jc_id = client.get(f"/jobs/{jid}/candidates", headers=h).json()[0]["id"]
+    r = client.post(f"/job-candidates/{jc_id}/enrich", headers=h).json()
+    assert r["requested_provider"] == "apollo"
+    assert r["is_sample"] is True and r["phone"]
+    assert "apollo" in (r["notice"] or "").lower()

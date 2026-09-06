@@ -60,6 +60,17 @@ class ApolloProvider:
         payload = self._post(SEARCH_PATH, body)
         return self._build_result(payload, page=query.page)
 
+    def enrich(self, source_id: str, *, full_name: str | None = None):  # type: ignore[override]
+        """Apollo reveals phone numbers only via `/people/match` with `reveal_phone_number=true`
+        + an HTTPS `webhook_url`, delivered **asynchronously** (see vendor-capability-matrix).
+        There is no synchronous phone reveal, so this raises: the platform must implement the
+        webhook round-trip (Phase 4b) before Apollo enrichment can complete. Raising here lets
+        the caller degrade to a clearly-flagged fallback rather than fake a synchronous result."""
+        raise ApolloError(
+            "Apollo phone enrichment is asynchronous (reveal via /people/match webhook) and "
+            "requires a paid plan; synchronous enrichment is not available."
+        )
+
     # --- Request/response mapping ----------------------------------------------
     @staticmethod
     def _build_request(query: PeopleSearchQuery) -> dict[str, Any]:

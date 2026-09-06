@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.integrations.llm import ExtractedJob
 from app.integrations.people_search.base import (
+    EnrichmentResult,
     ExternalCandidate,
     PeopleSearchQuery,
     PeopleSearchResult,
@@ -49,6 +50,17 @@ class SearchOutcome:
     requested_provider: str  # provider the platform is configured to use
     is_sample: bool  # True when sample data was returned instead of live results
     notice: str | None  # human-readable reason shown to the recruiter when degraded
+
+
+@dataclass(frozen=True)
+class EnrichmentOutcome:
+    phone: str | None
+    email: str | None
+    provider: str  # provider that produced the contact
+    requested_provider: str  # provider the candidate was sourced from / configured
+    is_sample: bool
+    already_had_contact: bool
+    notice: str | None
 
 
 @dataclass(frozen=True)
@@ -125,6 +137,76 @@ class SourcingService:
                     f"({reason}). Showing sample profiles so you can try the flow."
                 ),
             )
+
+    # --- enrichment (reveal contact for outreach) -------------------------------
+    def enrich(self, job_candidate: JobCandidate) -> EnrichmentOutcome:
+        """Reveal a sourced candidate's phone/email so an outreach call can be placed.
+
+        Idempotent: if the candidate already has a phone, returns it unchanged. Uses the
+        provider the candidate was sourced from; if that provider cannot enrich synchronously
+        (Apollo's async webhook / plan gate), falls back to the offline sample provider and
+        flags the result. Persists phone/email on the Candidate + as facts with provenance,
+        moves SOURCED → OUTREACH_PENDING, and audits."""
+        candidate = self._s.get(Candidate, job_candidate.candidate_id)
+        job = self._s.get(Job, job_candidate.job_id)
+        if candidate.phone:
+            return EnrichmentOutcome(
+                phone=candidate.phone, email=candidate.email, provider=candidate.source or "",
+                requested_provider=candidate.source or "", is_sample=candidate.source == "sample",
+                already_had_contact=True,
+                notice="This candidate already has a contact number.",
+            )
+
+        requested = (candidate.source or "sample").lower()
+        result, provider_used, is_sample, notice = self._run_enrichment(
+            job, requested, candidate.source_id or "", candidate.full_name
+        )
+
+        if result.phone:
+            candidate.phone = result.phone
+            self.record_fact_on(job_candidate, "phone", result.phone, source=provider_used)
+        if result.email and not candidate.email:
+            candidate.email = result.email
+            self.record_fact_on(job_candidate, "email", result.email, source=provider_used)
+        if job_candidate.pipeline_state == "SOURCED":
+            job_candidate.pipeline_state = "OUTREACH_PENDING"
+        self._s.flush()
+        write_audit(
+            self._s, org_id=job.org_id, actor_user_id=self._actor,
+            action="sourcing.candidate_enriched", entity_type="job_candidate",
+            entity_id=job_candidate.id, to_state="OUTREACH_PENDING",
+            meta={"provider": provider_used, "is_sample": is_sample,
+                  "revealed": [k for k, v in (("phone", result.phone), ("email", result.email)) if v]},
+        )
+        return EnrichmentOutcome(
+            phone=result.phone, email=result.email, provider=provider_used,
+            requested_provider=requested, is_sample=is_sample, already_had_contact=False,
+            notice=notice,
+        )
+
+    def _run_enrichment(self, job: Job, requested: str, source_id: str, full_name: str | None):
+        """Return (EnrichmentResult, provider_used, is_sample, notice), degrading to sample."""
+        if requested == "sample":
+            return SampleProvider().enrich(source_id, full_name=full_name), "sample", True, None
+        try:
+            provider = get_people_search_provider(requested)
+            return provider.enrich(source_id, full_name=full_name), requested, False, None
+        except Exception as exc:
+            reason = _short_reason(exc)
+            write_audit(
+                self._s, org_id=job.org_id, actor_user_id=self._actor,
+                action="sourcing.enrichment_unavailable", entity_type="job", entity_id=job.id,
+                reason=f"{requested}: {reason}", meta={"requested_provider": requested},
+            )
+            fallback = SampleProvider().enrich(source_id, full_name=full_name)
+            return (
+                fallback, "sample", True,
+                f"{requested.title()} enrichment is not available ({reason}). "
+                f"Used a sample contact number so you can try outreach.",
+            )
+
+    def record_fact_on(self, job_candidate: JobCandidate, key: str, value: str, *, source: str) -> None:
+        CandidateService(self._s, self._actor).record_fact(job_candidate, key, value, source=source)
 
     # --- add to pipeline --------------------------------------------------------
     def add_to_pipeline(

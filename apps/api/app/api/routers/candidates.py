@@ -15,10 +15,12 @@ from app.api.schemas import (
     CandidateSummary,
     DecisionIn,
     DecisionOut,
+    EnrichOut,
     JobCandidateListItem,
     JobCandidateOut,
     TimelineOut,
 )
+from app.modules.sourcing import SourcingService
 from app.db.session import get_session
 from app.modules.candidates.models import Candidate, CandidateFact, CandidateStageRun, JobCandidate
 from app.modules.candidates.service import CandidateService
@@ -140,6 +142,23 @@ def decide(jc_id: UUID, body: DecisionIn, session: Session = Depends(get_session
         current_stage_id=jc.current_stage_id,
         current_stage_name=next_stage.name if next_stage else None,
         advanced=next_run is not None,
+    )
+
+
+@router.post("/job-candidates/{jc_id}/enrich", response_model=EnrichOut, status_code=201)
+def enrich(jc_id: UUID, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
+    """Reveal a sourced candidate's contact details so an outreach call can be placed.
+
+    Uses the provider the candidate was sourced from, degrading to a flagged sample contact
+    when that provider can't enrich synchronously (Apollo async/plan gate). Idempotent."""
+    jc = _jc_or_404(session, principal, jc_id)
+    outcome = SourcingService(session, principal.user_id).enrich(jc)
+    session.refresh(jc)
+    return EnrichOut(
+        phone=outcome.phone, email=outcome.email, provider=outcome.provider,
+        requested_provider=outcome.requested_provider, is_sample=outcome.is_sample,
+        already_had_contact=outcome.already_had_contact, notice=outcome.notice,
+        pipeline_state=jc.pipeline_state,
     )
 
 

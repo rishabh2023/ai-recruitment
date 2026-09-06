@@ -17,6 +17,7 @@ from enrichment (Phase 4). Missing data is modelled as absence, never an error.
 from __future__ import annotations
 
 from .base import (
+    EnrichmentResult,
     ExternalCandidate,
     PeopleSearchQuery,
     PeopleSearchResult,
@@ -43,6 +44,25 @@ class SampleProvider:
     """Offline provider returning deterministic sample profiles filtered by the query."""
 
     key = "sample"
+
+    def enrich(self, source_id: str, *, full_name: str | None = None) -> EnrichmentResult:
+        """Return a deterministic, obviously-fake test phone + email for a sample profile.
+
+        Uses a reserved-for-fiction range so a demo can never dial a real person. Deterministic
+        in the id so repeated enrichment is stable. Works for any id (not just the bench) so a
+        candidate sourced earlier still enriches after a restart."""
+        digits = "".join(ch for ch in source_id if ch.isdigit()) or "0"
+        suffix = int(digits[-4:]) if digits[-4:].isdigit() else 0
+        phone = f"+1-555-{1000 + (suffix % 9000):04d}"  # +1-555-01xx range, not a real number
+        person = next((p for p in _BENCH if p["id"] == source_id), None)
+        email = None
+        if person and person.get("full_name"):
+            handle = person["full_name"].lower().replace(" ", ".")
+            email = f"{handle}@example.com"  # example.com is reserved for documentation
+        return EnrichmentResult(
+            source="sample", source_id=source_id, phone=phone, email=email,
+            raw={"sample": True},
+        )
 
     def search(self, query: PeopleSearchQuery) -> PeopleSearchResult:
         matched = [p for p in _BENCH if _matches(p, query)]

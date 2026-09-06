@@ -58,6 +58,22 @@ class ExternalCandidate:
 
 
 @dataclass(frozen=True)
+class EnrichmentResult:
+    """Contact details revealed by an enrichment lookup for one sourced profile.
+
+    Search endpoints return no email/phone (only `has_email`/`has_direct_phone` flags), so a
+    separate enrichment step reveals them. Fields are optional: a provider may reveal only an
+    email, only a phone, or (when async, e.g. Apollo's webhook flow) nothing synchronously.
+    """
+
+    source: str
+    source_id: str
+    phone: str | None = None
+    email: str | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class PeopleSearchResult:
     candidates: list[ExternalCandidate]
     total: int | None  # provider-reported total when available
@@ -78,3 +94,12 @@ class PeopleSearchProvider(Protocol):
     key: str
 
     def search(self, query: PeopleSearchQuery) -> PeopleSearchResult: ...
+
+    def enrich(self, source_id: str, *, full_name: str | None = None) -> EnrichmentResult:
+        """Reveal contact details for a previously-sourced profile.
+
+        Implementations that cannot enrich synchronously (e.g. Apollo delivers phone via an
+        async webhook, or the plan lacks access) must raise, so the caller can degrade with a
+        clear message rather than presenting empty contact data as success.
+        """
+        ...

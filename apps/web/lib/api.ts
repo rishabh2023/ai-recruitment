@@ -139,6 +139,8 @@ export const api = {
       `/jobs/${jobId}/sourcing/add`,
       { method: "POST", body: JSON.stringify({ candidates }) },
     ),
+  enrichCandidate: (jcId: string) =>
+    req<EnrichResult>(`/job-candidates/${jcId}/enrich`, { method: "POST" }),
 
   syncCall: (callId: string) =>
     req<{ call_id: string; normalized_status: string | null; vendor_status: string | null; hunar_call_id: string | null }>(
@@ -248,6 +250,16 @@ export type PeopleSearchResult = {
   has_more: boolean;
   suggested_query: PeopleSearchInput;
   candidates: ExternalCandidate[];
+};
+export type EnrichResult = {
+  phone: string | null;
+  email: string | null;
+  provider: string;
+  requested_provider: string;
+  is_sample: boolean;
+  already_had_contact: boolean;
+  notice: string | null;
+  pipeline_state: string | null;
 };
 export type Timeline = {
   job_candidate: JobCandidateOut;

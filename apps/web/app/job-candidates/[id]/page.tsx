@@ -65,6 +65,29 @@ export default function CandidateDetailPage() {
     }
   }
 
+  const [enriching, setEnriching] = useState(false);
+  async function enrich() {
+    setEnriching(true);
+    setLaunchError(null);
+    setLaunchNote(null);
+    try {
+      const r = await api.enrichCandidate(jcId);
+      if (r.already_had_contact) {
+        setLaunchNote("Candidate already has a contact number.");
+      } else if (r.phone) {
+        setLaunchNote(
+          `Contact revealed (${r.phone})${r.is_sample ? " — sample number" : ""}. You can now start the outreach call.`,
+        );
+      }
+      if (r.notice) setLaunchNote((n) => (n ? `${n} ${r.notice}` : r.notice));
+      await load();
+    } catch (e) {
+      setLaunchError((e as Error).message);
+    } finally {
+      setEnriching(false);
+    }
+  }
+
   const [deciding, setDeciding] = useState(false);
   async function decide(outcome: "pass" | "reject") {
     setLaunchError(null);
@@ -103,6 +126,10 @@ export default function CandidateDetailPage() {
   const isRetry = !!latestRun && RETRYABLE.has(latestRun.status);
   const canLaunch = !!latestRun && (LAUNCHABLE.has(latestRun.status) || isRetry);
   const needsReview = !!latestRun && latestRun.status === "NEEDS_REVIEW";
+  const state = tl.job_candidate.pipeline_state ?? "";
+  const isOutreach = state === "SOURCED" || state === "OUTREACH_PENDING";
+  const needsContact = !c.phone;
+  const launchLabel = isRetry ? "Retry call" : isOutreach ? "Start outreach call" : "Launch AI stage";
 
   return (
     <main className="container">
@@ -115,9 +142,21 @@ export default function CandidateDetailPage() {
           )}
         </div>
         <div style={{ textAlign: "right" }}>
-          <button onClick={launch} disabled={launching || !canLaunch} title={canLaunch ? "" : "No stage is ready to launch"}>
-            {launching ? (isRetry ? "Retrying…" : "Launching…") : isRetry ? "Retry call" : "Launch AI stage"}
-          </button>
+          <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+            {needsContact && (
+              <button onClick={enrich} disabled={enriching} title="Reveal a contact number so an outreach call can be placed">
+                {enriching ? "Enriching…" : "Enrich contact"}
+              </button>
+            )}
+            <button
+              onClick={launch}
+              disabled={launching || !canLaunch || needsContact}
+              className={needsContact ? "secondary" : ""}
+              title={needsContact ? "Enrich contact first — no phone number yet" : canLaunch ? "" : "No stage is ready to launch"}
+            >
+              {launching ? (isRetry ? "Retrying…" : "Starting…") : launchLabel}
+            </button>
+          </div>
           <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
             <button className="linklike" onClick={load}>Refresh</button>
           </div>
