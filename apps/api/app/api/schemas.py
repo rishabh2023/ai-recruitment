@@ -141,6 +141,15 @@ class LaunchOut(BaseModel):
     call_id: UUID
     normalized_status: str
     hunar_payload: dict
+    dispatched: bool = False  # whether a real Hunar call was attempted
+    hunar_call_id: str | None = None
+
+
+class CallStatusOut(BaseModel):
+    call_id: UUID
+    normalized_status: str | None
+    vendor_status: str | None
+    hunar_call_id: str | None
 
 
 class TimelineOut(BaseModel):

@@ -22,10 +22,13 @@ registry.import_models()  # populate Base.metadata with all tables
 
 
 @pytest.fixture(autouse=True)
-def _force_stub_llm(monkeypatch):
-    """Keep the suite hermetic: always use the deterministic stub LLM, never a real Claude call,
-    even when a PLATFORM_LLM_API_KEY is present in the environment or .env."""
+def _hermetic_external(monkeypatch):
+    """Keep the suite hermetic: never make a real Claude call or a real Hunar call, even when
+    keys / live-call flags are present in the environment or .env."""
     monkeypatch.setattr(settings, "platform_llm_api_key", "", raising=False)
+    monkeypatch.setattr(settings, "hunar_live_calls_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "hunar_api_key", "", raising=False)
+    monkeypatch.setattr(settings, "hunar_default_agent_id", "", raising=False)
 
 
 def _url() -> str:

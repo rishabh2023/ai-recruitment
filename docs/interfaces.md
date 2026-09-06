@@ -69,6 +69,15 @@ GET/POST /calls/     POST /calls/bulk/     GET /calls/{id}/
 GET /numbers/
 ```
 
+**Live dispatch (realized).** `POST /job-candidates/{id}/launch` persists the call intent, then
+enqueues a Celery task (`dispatch_hunar_call`, eager in dev) that runs `HunarDispatchService`:
+resolve the agent (stage `HunarAgentConfig`, else `HUNAR_DEFAULT_AGENT_ID`), fill the agent's
+`required_variables` into `custom_data`, `POST /calls/`, and record `hunar_call_id` + status on
+the Call. Gated by `HUNAR_LIVE_CALLS_ENABLED` (+ key); off by default. Results/recordings arrive
+async via the webhook; `POST /calls/{id}/sync` pulls current status on demand (dev, no public
+webhook). A terminal not-connected call (no answer / failed / cancelled) fails the run with a
+reason instead of leaving it waiting; re-launching a failed run starts a fresh attempt.
+
 Implemented in `apps/api/app/integrations/hunar/` (`HunarClient`, `HunarConfig`,
 `verify_webhook_signature`, `webhook_dedup_key`). The adapter centralizes authentication,
 timeouts, and retries; isolates request/response shapes; keeps Hunar details out of business

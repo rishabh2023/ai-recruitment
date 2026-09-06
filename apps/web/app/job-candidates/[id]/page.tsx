@@ -7,6 +7,8 @@ import { api, type Timeline } from "@/lib/api";
 
 // Stage-run statuses that mean "an AI stage can be launched now".
 const LAUNCHABLE = new Set(["READY", "SCHEDULED"]);
+// Terminal states a recruiter can retry from (e.g. candidate didn't answer).
+const RETRYABLE = new Set(["FAILED", "CANCELLED"]);
 
 export default function CandidateDetailPage() {
   const { id: jcId } = useParams<{ id: string }>();
@@ -39,13 +41,27 @@ export default function CandidateDetailPage() {
     setLaunchNote(null);
     try {
       const r = await api.launch(jcId);
-      setLaunchNote(`AI stage launched — status ${r.normalized_status}.`);
+      setLaunchNote(
+        r.dispatched
+          ? `AI call placed via Hunar — status ${r.normalized_status}.`
+          : `AI stage queued — status ${r.normalized_status}. (Live calling is off; enable it to dial.)`,
+      );
       await load();
     } catch (e) {
       // External/API or state failure: surface reason + next action (retryable).
       setLaunchError((e as Error).message);
     } finally {
       setLaunching(false);
+    }
+  }
+
+  async function syncCall(callId: string) {
+    setLaunchError(null);
+    try {
+      await api.syncCall(callId);
+      await load();
+    } catch (e) {
+      setLaunchError((e as Error).message);
     }
   }
 
@@ -62,7 +78,8 @@ export default function CandidateDetailPage() {
 
   const c = tl.candidate;
   const latestRun = tl.stage_runs[tl.stage_runs.length - 1];
-  const canLaunch = latestRun && LAUNCHABLE.has(latestRun.status);
+  const isRetry = !!latestRun && RETRYABLE.has(latestRun.status);
+  const canLaunch = !!latestRun && (LAUNCHABLE.has(latestRun.status) || isRetry);
 
   return (
     <main className="container">
@@ -76,7 +93,7 @@ export default function CandidateDetailPage() {
         </div>
         <div style={{ textAlign: "right" }}>
           <button onClick={launch} disabled={launching || !canLaunch} title={canLaunch ? "" : "No stage is ready to launch"}>
-            {launching ? "Launching…" : "Launch AI stage"}
+            {launching ? (isRetry ? "Retrying…" : "Launching…") : isRetry ? "Retry call" : "Launch AI stage"}
           </button>
           <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
             <button className="linklike" onClick={load}>Refresh</button>
@@ -84,6 +101,11 @@ export default function CandidateDetailPage() {
         </div>
       </div>
 
+      {isRetry && !launchNote && (
+        <p className="muted" style={{ fontSize: 13 }}>
+          The last attempt didn&apos;t connect (candidate didn&apos;t answer). Use <b>Retry call</b> to try again.
+        </p>
+      )}
       {launchNote && <p className="ok">{launchNote}</p>}
       {launchError && (
         <div className="card" style={{ borderColor: "var(--danger, #b91c1c)" }}>
@@ -131,7 +153,12 @@ export default function CandidateDetailPage() {
             <h4 className="muted">Call attempts</h4>
             {tl.calls.map((call) => (
               <div className="card" key={call.id}>
-                <span className={`badge status-${call.normalized_status}`}>{call.normalized_status}</span>
+                <div className="row" style={{ justifyContent: "space-between" }}>
+                  <span className={`badge status-${call.normalized_status}`}>{call.normalized_status}</span>
+                  {call.hunar_call_id && (
+                    <button className="linklike" onClick={() => syncCall(call.id)}>Sync from Hunar</button>
+                  )}
+                </div>
               </div>
             ))}
           </>

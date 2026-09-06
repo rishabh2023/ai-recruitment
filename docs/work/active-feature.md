@@ -129,15 +129,21 @@ This file is the resume point for any agent. Keep it current.
 ## Risks / open questions
 
 - Apollo Search 403 (key lacks API access). Provider choice pending.
-- **Hunar live call VERIFIED (2026-09-06):** a real `POST /calls/` completed end-to-end to a
-  consenting number (answered_by HUMAN, 117s, ended_by AGENT). A `from_phone_number` is
-  auto-assigned despite `/numbers/` count 0, so the old "no number" blocker is gone. BUT the
-  **platform does not yet place calls itself**: `HunarClient.create_call` is an unimplemented
-  stub, `InterviewService.launch_ai_stage` only *builds* the payload and uses a placeholder
-  `agent_id`. To wire real calls in-product: implement the HTTP client, provision/select a real
-  agent per stage, map the agent's `required_variables` into `custom_data` (missing keys → 422),
-  run it in a Celery task, and register a public webhook URL for `call_result_done` /
-  `call_recording_done` (structured result + recording arrive async, not on the sync GET).
+- **Hunar live calls WIRED INTO THE PRODUCT (2026-09-06):** the launch endpoint now places a
+  real call. `HunarClient` has real HTTP; `HunarDispatchService` (`app/modules/interviews/
+  dispatch.py`) resolves the agent (stage `HunarAgentConfig` → else `HUNAR_DEFAULT_AGENT_ID`),
+  fills the agent's `required_variables` into `custom_data`, POSTs `/calls/`, and records the
+  outcome on the Call; a Celery task (`app/tasks.py`, eager in dev) runs it. Verified live
+  end-to-end via `POST /job-candidates/{id}/launch` → `dispatched:true` + real `hunar_call_id`,
+  status synced SCHEDULED→CALLING→NO_ANSWER (a rejected call).
+- **Rejected / unanswered handling:** a terminal not-connected call (NO_ANSWER/FAILED/CANCELLED)
+  with no result moves the run AWAITING_RESULT→FAILED with a reason + audit (never stuck);
+  RETRY_SCHEDULED (retries left) keeps it AWAITING_RESULT. Re-launching a FAILED/CANCELLED run
+  starts a **fresh** run (UI shows "Retry call"). Results/recordings still arrive async via the
+  webhook; `POST /calls/{id}/sync` pulls status on demand when no public webhook URL is set.
+- **Safety:** live calls fire ONLY when `HUNAR_LIVE_CALLS_ENABLED=1` AND a key is set (default
+  off); tests force these off in conftest so the suite never dials. Celery eager by default (no
+  worker needed); set `CELERY_TASK_ALWAYS_EAGER=0` + run `celery -A app.tasks worker` in prod.
 - **Test suite truncates the dev DB:** the HTTP test fixtures run `TRUNCATE organizations …
   CASCADE`, so running `pytest` against the same `DATABASE_URL` used for a live demo wipes
   demo data (incl. the demo account). Re-seed the demo account after a full test run, or use a

@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.integrations.hunar import normalize_call_status, webhook_dedup_key
@@ -30,6 +30,15 @@ _FACT_KEYS = (
     "interested", "current_ctc", "expected_ctc", "notice_period",
     "preferred_location", "availability", "reason_for_change",
 )
+
+# Terminal call outcomes with no structured result → the run cannot wait forever. Each maps to
+# a human-readable reason recorded on the FAILED transition. RETRY_SCHEDULED is intentionally
+# absent: a retry is pending, so the run stays AWAITING_RESULT.
+_UNCONNECTED_TERMINAL = {
+    "NO_ANSWER": "Candidate did not answer / rejected the call (not connected).",
+    "FAILED": "Call failed at the provider.",
+    "CANCELLED": "Call was cancelled.",
+}
 
 
 class WebhookService:
@@ -69,10 +78,59 @@ class WebhookService:
             self._update_call_status(call, payload)
             if event_type in ("call_result_done", "call_summary") and payload.get("result"):
                 self._apply_result(call, payload)
+            else:
+                self._advance_run_for_terminal_status(call)
 
         event.processed_at = datetime.now(timezone.utc)
         self._s.flush()
         return event
+
+    def sync_call(self, call: Call, snapshot: dict) -> Call:
+        """Apply a `GET /calls/{id}` snapshot (status + optional result) to a Call.
+
+        Used by the status-sync endpoint when no public webhook URL is registered (dev). Safe to
+        call repeatedly — the structured result is ingested at most once per stage run.
+        """
+        self._update_call_status(call, snapshot)
+        if snapshot.get("result") and not self._has_result(call):
+            self._apply_result(call, snapshot)
+        else:
+            self._advance_run_for_terminal_status(call)
+        return call
+
+    def _advance_run_for_terminal_status(self, call: Call) -> None:
+        """A terminal, not-connected call (no answer / failed / cancelled) must not leave the
+        stage run waiting forever. Move it to FAILED with a reason so the recruiter sees why and
+        can retry. RETRY_SCHEDULED is left as-is (a retry is pending)."""
+        from app.modules.candidates.models import CandidateStageRun
+
+        if call.candidate_stage_run_id is None:
+            return
+        reason = _UNCONNECTED_TERMINAL.get(call.normalized_status or "")
+        if reason is None:
+            return
+        run = self._s.get(CandidateStageRun, call.candidate_stage_run_id)
+        if run is None or run.status != StageRunState.AWAITING_RESULT.value:
+            return
+        WorkflowExecutionService(self._s, self._actor).fail(run, reason=reason)
+        jc = self._s.get(JobCandidate, call.job_candidate_id)
+        job = self._s.get(Job, jc.job_id)
+        write_audit(
+            self._s, org_id=job.org_id, actor_user_id=self._actor,
+            action="interview.call_not_connected", entity_type="call", entity_id=call.id,
+            to_state="FAILED", reason=reason,
+        )
+        self._s.flush()
+
+    def _has_result(self, call: Call) -> bool:
+        if call.candidate_stage_run_id is None:
+            return False
+        n = self._s.scalar(
+            select(func.count()).select_from(StageResult).where(
+                StageResult.candidate_stage_run_id == call.candidate_stage_run_id
+            )
+        )
+        return bool(n and n > 0)
 
     # --- internals --------------------------------------------------------------
     def _resolve_call(self, payload: dict) -> Call | None:

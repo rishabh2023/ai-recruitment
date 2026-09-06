@@ -18,8 +18,22 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=(str(_ROOT_ENV), str(_API_ENV)), extra="ignore")
 
     database_url: str = "postgresql://recruitment:recruitment@localhost:5432/recruitment"
-    hunar_webhook_signing_key: str = ""
+    redis_url: str = "redis://localhost:6379/0"
     cors_origins: str = "http://localhost:3000"
+
+    # Hunar voice AI (single provider).
+    hunar_api_key: str = ""
+    hunar_api_base_url: str = "https://api.voice.hunar.ai/external/v1"
+    hunar_webhook_signing_key: str = ""
+    # Agent used for AI stages that have no explicit HunarAgentConfig (demo/default).
+    hunar_default_agent_id: str = ""
+    # Safety switch: real outbound calls are placed ONLY when this is true (and a key is set).
+    # Off by default so tests/dev never dial a real number unintentionally.
+    hunar_live_calls_enabled: bool = False
+
+    # Celery: eager runs tasks inline (no worker/broker needed) — the dev default. Set to
+    # false in production and run a worker against redis_url.
+    celery_task_always_eager: bool = True
 
     # Session-cookie auth. `session_cookie_secure` must be True in production (HTTPS);
     # left False so the cookie works over plain-HTTP localhost during development.

@@ -108,7 +108,15 @@ export const api = {
   // Returns Hunar internals in hunar_payload; the UI intentionally ignores that (recruiters
   // see product concepts only, never telephony/agent internals).
   launch: (jcId: string) =>
-    req<{ call_id: string; normalized_status: string }>(`/job-candidates/${jcId}/launch`, { method: "POST" }),
+    req<{ call_id: string; normalized_status: string; dispatched: boolean; hunar_call_id: string | null }>(
+      `/job-candidates/${jcId}/launch`,
+      { method: "POST" },
+    ),
+  syncCall: (callId: string) =>
+    req<{ call_id: string; normalized_status: string | null; vendor_status: string | null; hunar_call_id: string | null }>(
+      `/calls/${callId}/sync`,
+      { method: "POST" },
+    ),
 };
 
 export type Job = { id: string; title: string; status: string; created_at: string };
