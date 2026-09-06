@@ -10,8 +10,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # regardless of the current working directory. Real environment variables still take precedence
 # over both, so exported vars (CI, Docker, tests) win. config.py lives at apps/api/app/config.py.
 _APP_DIR = Path(__file__).resolve()
-_ROOT_ENV = _APP_DIR.parents[3] / ".env"   # repository root
-_API_ENV = _APP_DIR.parents[1] / ".env"    # apps/api/.env (optional local override)
+# Resolve candidate .env files defensively: in local dev config.py lives at
+# apps/api/app/config.py (repo root is parents[3]), but in the Docker image the code is
+# flattened to /app/app/config.py where parents[3] does not exist. Guard the depth so the
+# app never crashes on import; in containers env is injected as real environment variables
+# (compose env_file / -e), which pydantic-settings always prefers over these files anyway.
+_parents = _APP_DIR.parents
+_ROOT_ENV = (_parents[3] / ".env") if len(_parents) > 3 else Path(".env")  # repository root
+_API_ENV = (_parents[1] / ".env") if len(_parents) > 1 else Path(".env")   # apps/api/.env (optional)
 
 
 class Settings(BaseSettings):
