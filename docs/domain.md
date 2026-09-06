@@ -30,7 +30,9 @@ retries, duplicate events, partial results, and manual overrides.
 | **Audit Event** | Immutable record of a consequential action. |
 | **Calling Policy** | Per-org/job (optionally per-stage) calling window, timezone behavior, attempt limits, retry interval, language. |
 | **Workflow Template / Template Version / Stage Template** | Organization-owned reusable library that jobs resolve from. |
-| **External Search / External Candidate** | Apollo search records and sourced profiles with provenance. |
+| **External Candidate** | A normalized sourced profile from a people-search provider (Apollo/PDL/Proxycurl/Coresignal), with provenance (`source`, `source_id`). Added to a job it becomes a Candidate + Job Candidate at `SOURCED`. |
+| **Org Settings** | Per-organization config: people-search provider API keys (write-only, never returned), default provider, live-calling toggle. Provider keys resolve org-first, then `.env`. |
+| **User Invite** | A pending invitation (email + role) to join an org. One-time token (stored hashed); accepting it sets a password and creates the user. |
 
 ## Relationships
 
@@ -109,6 +111,11 @@ INTERVIEW_PENDING · INTERVIEWED · NEEDS_REVIEW · SHORTLISTED · REJECTED`
 This is a **default illustration**. The authoritative progression is the job's configured
 workflow stages. Existing candidates may enter at a later stage (e.g. `INTERVIEW_PENDING`).
 Pipeline state is persisted, never derived solely from UI (dragging a card is not truth).
+
+**Realized sourcing transitions (Flow B):** a sourced candidate starts `SOURCED`; enrichment
+(`POST /job-candidates/{id}/enrich`, reveals contact via the source provider) moves it to
+`OUTREACH_PENDING`; launching the outreach call moves it to `CONTACTED`. Each transition is
+audited. Existing imported candidates start at `INTERVIEW_PENDING` instead.
 
 ### Stage transition policy
 

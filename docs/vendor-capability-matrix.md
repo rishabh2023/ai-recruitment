@@ -45,9 +45,20 @@ Base URL (verified): `https://api.voice.hunar.ai/external/v1`. Auth: `X-API-Key`
 ## People Search (multi-provider)
 
 The platform is **not Apollo-only**. The assignment permits Apollo.io, People Data Labs
-(PDL), Proxycurl, or Coresignal, selected via `PEOPLE_SEARCH_PROVIDER`. The rows below track
-the currently active first provider (Apollo); each additional provider gets its own
-verification before use. See ADR-0001 and `apps/api/app/integrations/people_search/`.
+(PDL), Proxycurl, or Coresignal — **all four are implemented** as real adapters
+(`search()` + `enrich()`); the recruiter picks a provider per search, or the org default is
+used. There is **no sample/fabricated data** in the product: an unconfigured or plan-gated
+provider returns an honest error (HTTP 502), never invented results. Keys are configured
+per-org in Settings (`org_settings.provider_keys`, overlaid on `.env`). See ADR-0001 and
+`apps/api/app/integrations/people_search/`.
+
+**Provider status summary (2026-09-06):**
+
+| Provider | Status | Evidence |
+| -------- | ------ | -------- |
+| **People Data Labs (PDL)** | `VERIFIED` (live) | Real `POST /v5/person/search` returned real profiles with a live key (e.g. "software engineer" → 1.78M matches; real names/companies incl. Google, Snap, EA). Adapter quirks fixed against live API: `from` offset removed (use `scroll_token`), 404 "no records" → empty result, plan-gated fields returned as boolean `true` → coerced to absent. Free-tier search returns profiles but **not** contact details (enrichment/phone is plan-gated). |
+| **Apollo.io** | `VERIFIED` (contract); Search **plan-gated** | `[apollo-live]` `POST /mixed_people/(api_)search` → **HTTP 403 API_INACCESSIBLE** "not included in your Free plan … not accessible even with a master key." Adapter is correct; needs a paid plan. |
+| **Proxycurl / Coresignal** | Implemented to documented contract; **not live-verified** | Adapters written to vendor docs (two-step search→enrich); no key exercised yet. Treated as unverified until a live key confirms mapping. |
 
 ### Apollo (first provider)
 

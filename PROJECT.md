@@ -70,5 +70,26 @@ stage-driven model is canonical. See `docs/architecture.md` §"Conflicts resolve
 
 ## Current status
 
-Setup phase. Foundation and F-001 plan only. **No application code exists yet.** The next
-step is Phase 0 (F-001: Hunar Contract Verification), pending approval.
+**Both core journeys are built and working end to end.** Realized (see `docs/features/INDEX.md`):
+
+- **Backend** (`apps/api`, FastAPI modular monolith): auth (session cookies) + org/user model;
+  job creation (paste or PDF JD → Claude Haiku extraction → confirm → draft workflow → approve →
+  activate); in-UI workflow/criteria editing; calling policy; candidate import + timeline;
+  interview launch via a real Hunar call (Celery, gated) with webhook + on-demand sync; recruiter
+  advance/reject decisions.
+- **Journey 2 — People Search & Outreach (real):** search across **four real providers**
+  (Apollo, People Data Labs, Proxycurl, Coresignal) with a recruiter-chosen provider; no sample
+  data — an unconfigured/plan-gated provider returns an honest error, never fabricated results.
+  Add results to the pipeline (SOURCED, deduped) → enrich contact → outreach call (CONTACTED).
+  **PDL verified live** (real profiles). Apollo Search is Free-plan gated (403, confirmed live).
+- **Settings** (admin): per-org people-search API keys (write-only), default provider,
+  live-calling toggle, team roster, and **team invites** (one-time link → set password → join).
+- **Frontend** (`apps/web`, Next.js): dashboard, jobs, job hub (workflow + pipeline board),
+  candidate timeline, Sourcing, Settings, accept-invite.
+- **MCP server** (`apps/mcp`): 31 tools exposing the platform to Claude Code / ChatGPT, incl.
+  one-shot journey macros (`source_and_outreach`, `import_and_interview`).
+
+**Verification:** 94 API/Python tests pass (against a dedicated `*_test` DB); web typechecks;
+flows browser-verified. Remaining: deployment, OpenTelemetry/Sentry, role-based capability
+enforcement, and the attendance module (Question 3). Deferred vendor capabilities stay gated on
+`VERIFIED` status.

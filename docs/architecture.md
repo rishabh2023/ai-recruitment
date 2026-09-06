@@ -15,24 +15,28 @@ FastAPI Modular Monolith
   ├── Workflows            (templates, versions, stages)
   ├── Candidates
   ├── Pipeline
-  ├── Search               (Apollo)
-  ├── Outreach
+  ├── Sourcing             (people search + outreach; Apollo/PDL/Proxycurl/Coresignal)
   ├── Interviews
   ├── Evaluation
   ├── Calling Policy
+  ├── Settings             (org config: provider keys, default, live-calling, team invites)
   ├── Webhook
   ├── WorkflowExecutionService  (owns candidate stage progression)
   ├── Integrations
   │     ├── Hunar Adapter
-  │     ├── Apollo Adapter
+  │     ├── People-search Adapters   (4 providers, real; search + enrich)
   │     └── LLM Adapter    (platform-side product intelligence only)
   ├── Workers (Celery tasks)
   └── Observability
         ↓
 PostgreSQL  •  Redis + Celery
         ↓
-Hunar API   •   Apollo API   •   LLM
+Hunar API   •   People-search APIs   •   LLM
 ```
+
+An **MCP server** (`apps/mcp`) wraps the same HTTP API as ~31 tools so the platform can be
+driven conversationally from Claude Code / ChatGPT (stdio + streamable-http). It is a client of
+the API, not part of the monolith — all gates/auth/audit still apply.
 
 ### Realized backend layout (`apps/api`)
 
@@ -62,9 +66,14 @@ apps/api/
     ├── workflow_execution/           # WorkflowExecutionService + state machine + effective_info (carry-forward)
     └── integrations/                 # thin vendor adapters
         ├── hunar/                    # single voice provider (verified surface, webhook verifier, status map + payload builder)
-        ├── people_search/            # multi-provider (Apollo first; PDL/Proxycurl/Coresignal pluggable)
-        └── llm/                      # platform product-intelligence only (offline stub; real provider pluggable)
+        ├── people_search/            # 4 real providers (apollo, pdl, proxycurl, coresignal) + base/registry; sample only for tests
+        └── llm/                      # platform product-intelligence only (offline stub; real Claude Haiku provider)
 ```
+
+`modules/organizations/` also holds `settings_service.py` (org config: provider keys, default
+provider, live-calling) and `invites.py` (team invites); `modules/sourcing/service.py` is
+`SourcingService` (search / add-to-pipeline / enrich — real providers only, no fabrication).
+Sibling app `apps/mcp/` is the MCP server (client of the API, own venv).
 
 The frontend lives in `apps/web` (Next.js App Router + TypeScript): `app/` pages (dashboard,
 guided job creation), `lib/api.ts` typed client. It renders state and calls the API — never the
@@ -84,7 +93,8 @@ organizations → jobs → workflows → candidates → interviews → webhooks 
 | **Redis**        | Ephemeral coordination only: Celery broker/backend, distributed locks, rate limiting, short-lived cache, dedup coordination. Never the sole store of hiring state. |
 | **Celery**       | Durable async execution: call launches, bulk work, webhook processing, scheduled retries, agent/config provisioning. Survives request completion and restarts. |
 | **Hunar adapter**| Thin, vendor-specific boundary. Centralizes auth, timeouts, retries, request/response shapes. No generic multi-provider framework. |
-| **Apollo adapter**| Thin people-search boundary. Preserves source provenance/metadata. |
+| **People-search adapters**| Thin per-provider boundary (Apollo/PDL/Proxycurl/Coresignal), `search()` + `enrich()`. Real data only — preserves provenance; unconfigured/plan-gated providers surface honest errors, never fabricated results. |
+| **Settings / invites**| Per-org config (provider API keys [write-only], default provider, live-calling toggle) and team invitations (one-time accept link → set password → join). |
 | **LLM adapter**  | Platform-side product intelligence only: JD understanding, role classification, structured skill extraction, draft workflow/rubric generation. Never candidate conversation, never duplicating Hunar evaluation. |
 | **OpenTelemetry**| Distributed tracing across UI → API → DB → Redis → Celery → Hunar/Apollo → webhook processing. |
 | **Sentry**       | Frontend errors, backend exceptions, Celery task failures, release correlation. |

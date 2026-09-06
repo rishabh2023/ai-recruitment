@@ -7,21 +7,41 @@ boundaries, webhooks, and background jobs.
 
 - REST over JSON. Resource-oriented paths, organization-scoped by the authenticated
   principal (org id is never taken from the client body for authorization).
-- Illustrative endpoints (final contracts locked after Hunar mapping is `VERIFIED`):
+- **Realized endpoints** (the app serves these today):
 
   ```
-  POST   /jobs                              GET    /jobs        GET/PATCH /jobs/{id}
-  POST   /jobs/{id}/extract                 POST   /jobs/{id}/workflow/resolve
-  POST   /jobs/{id}/workflow/generate       PUT    /jobs/{id}/workflow
-  POST   /jobs/{id}/rubric/generate         PUT    /jobs/{id}/rubric
-  GET/PUT /jobs/{id}/calling-policy
-  POST   /jobs/{id}/approve
-  POST   /jobs/{id}/candidates              POST   /jobs/{id}/candidates/import
-  POST   /jobs/{id}/people-search           POST   /jobs/{id}/outreach
-  POST   /jobs/{id}/interviews
-  GET    /candidates/{id}                   GET    /candidates/{id}/timeline
-  POST   /webhooks/hunar
+  # system
+  GET  /health
+  # auth / session
+  POST /auth/signup   POST /auth/login   POST /auth/logout   GET /auth/me
+  GET  /auth/invite?token=            POST /auth/accept-invite            POST /dev/bootstrap
+  # dashboard
+  GET  /dashboard/summary             GET  /dashboard/activity
+  # jobs + workflow
+  POST /jobs   GET /jobs   GET /jobs/{id}
+  POST /jobs/{id}/versions            POST /jobs/{id}/versions/upload (PDF)
+  POST /jobs/{id}/versions/{vid}/confirm
+  POST /jobs/{id}/workflow/draft      GET  /jobs/{id}/workflow
+  GET  /jobs/{id}/workflow/versions/{vid}/stages   (list stages)
+  PUT  /jobs/{id}/workflow/versions/{vid}/stages   (edit stages + criteria)
+  POST /jobs/{id}/workflow/versions/{vid}/approve
+  POST /jobs/{id}/activate            GET/PUT /jobs/{id}/calling-policy
+  # candidates + pipeline
+  POST /jobs/{id}/candidates          GET  /jobs/{id}/candidates
+  GET  /job-candidates/{id}/timeline  POST /job-candidates/{id}/decision
+  POST /job-candidates/{id}/launch    POST /job-candidates/{id}/enrich    POST /calls/{id}/sync
+  # sourcing (people search & outreach — Flow B)
+  GET  /jobs/{id}/sourcing/providers  GET  /jobs/{id}/sourcing/suggested-query
+  POST /jobs/{id}/sourcing/search     POST /jobs/{id}/sourcing/add
+  # settings (admin) + team invites
+  GET/PUT /settings                   POST /settings/invites   DELETE /settings/invites/{id}
+  # webhooks
+  POST /webhooks/hunar
   ```
+
+  This is the complete set of routes the app serves today (verified against
+  `apps/api/app/api/routers/`). Detail on request/response shapes lives in
+  `apps/api/app/api/schemas.py`.
 
 - Consequential bulk actions (outreach/interview launch) require an explicit pre-launch
   review payload (candidate count, starting stage, calling window, retry policy, language)
@@ -103,14 +123,50 @@ per-candidate agents (see ADR-0002).
 
 ## People-search adapter boundary (multi-provider)
 
-People search is **provider-agnostic** (Apollo.io / PDL / Proxycurl / Coresignal), selected
-via `PEOPLE_SEARCH_PROVIDER`. The `PeopleSearchProvider` interface returns a normalized
-`ExternalCandidate` shape; providers own their own auth, request/response shaping, and
-pagination, return only fields the provider actually provides, model missing data as absence,
-and preserve provenance (`source`, `source_id`, `raw`). Selected via
-`get_people_search_provider()`. Semantic ranking beyond deterministic filters is a
-platform-LLM concern, kept out of the adapter. Implemented in
-`apps/api/app/integrations/people_search/`. See ADR-0001.
+People search is **provider-agnostic** — **four real providers are implemented**: Apollo.io,
+People Data Labs (PDL), Proxycurl, Coresignal. The `PeopleSearchProvider` interface exposes
+`search()` and `enrich()` and returns normalized `ExternalCandidate` / `EnrichmentResult`
+shapes; providers own their auth, request/response shaping, and pagination, return only fields
+the provider actually provides, model missing data as absence (e.g. PDL returns plan-gated
+fields as boolean `true` → coerced to absent), and preserve provenance (`source`, `source_id`,
+`raw`). Semantic ranking beyond deterministic filters is a platform-LLM concern, kept out of the
+adapter. Implemented in `apps/api/app/integrations/people_search/`. See ADR-0001.
+
+**Real data only — no fabrication.** `SourcingService` runs the provider the recruiter selects
+(`provider` in the search body) or the org default; there is **no sample fallback**. A provider
+that is unconfigured, plan-gated, or failing raises `SourcingProviderError` → **HTTP 502** with
+the real reason (e.g. "Apollo.io search failed: requires a paid plan (HTTP 403)"). A `sample`
+provider exists only for tests/local dev and is never used automatically. `GET
+/jobs/{id}/sourcing/providers` reports which providers are configured (has a key) + the default.
+
+**Provider keys resolve org-first.** Keys come from org Settings (`org_settings.provider_keys`)
+overlaid on process `.env`, so a key saved in Settings takes effect immediately for search,
+enrichment, and the providers list — no redeploy. Search returns no contact details;
+`POST /job-candidates/{id}/enrich` reveals phone/email via the candidate's source provider
+(honest 502 when the provider/plan can't), moving `SOURCED → OUTREACH_PENDING`. Outreach then
+reuses the interview launch path (`SOURCED`/`OUTREACH_PENDING → CONTACTED`).
+
+## Settings & team invites
+
+`GET /settings` (any user) returns org name, people-search providers (+ `configured` flags,
+never raw keys), default provider, live-calling flag, the team, and pending invites. `PUT
+/settings` (**admin only** → 403 otherwise) sets the default provider, toggles live outbound
+calling (gates real Hunar dialing), and sets provider API keys (write-only). **Invites:** `POST
+/settings/invites` (admin) creates an invite for an email + role and returns a **one-time accept
+link** (token shown once, stored only as a SHA-256 hash); `DELETE /settings/invites/{id}`
+revokes. The invitee uses `GET /auth/invite?token=` to preview and `POST /auth/accept-invite`
+(public) to set a password, which creates their user and signs them in. No email is sent — the
+admin shares the link. Backed by `org_settings` + `user_invites` tables.
+
+## MCP server (`apps/mcp`)
+
+A Model Context Protocol server exposes the platform as **31 tools** (thin wrappers over these
+same HTTP endpoints, so all gates/auth/audit still apply) for conversational use from Claude
+Code / ChatGPT. It signs in once (`RECRUIT_EMAIL`/`RECRUIT_PASSWORD`), reuses the session
+cookie, and re-authenticates on 401. Transports: **stdio** (Claude Code; registered via root
+`.mcp.json`) and **streamable-http** (`MCP_TRANSPORT=streamable-http`, endpoint `/mcp`; ChatGPT
+connectors — needs a public tunnel). Includes one-shot journey macros `source_and_outreach`
+(Flow B) and `import_and_interview` (Flow A). See `apps/mcp/README.md`.
 
 ## LLM adapter boundary
 

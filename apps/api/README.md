@@ -1,7 +1,12 @@
 # API (FastAPI modular monolith)
 
-Backend for the AI Recruitment Workflow platform. Phase 1 delivers the data layer; the
-FastAPI app, services, and routes come in later phases.
+Backend for the AI Recruitment Workflow platform — **built and serving the full flow**:
+session-cookie auth, jobs + workflow (JD → extract → confirm → draft → approve → activate),
+candidates + pipeline, interviews via a real Hunar call (Celery, gated) + webhook, real
+multi-provider sourcing (Apollo/PDL/Proxycurl/Coresignal — no sample data) with enrichment +
+outreach, and Settings (org provider keys, default provider, live-calling, team invites).
+**94 tests pass** against a dedicated `*_test` database (see `tests/conftest.py`). An MCP
+server (`apps/mcp`) wraps this API for conversational use.
 
 ## Layout (Django-app style)
 

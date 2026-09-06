@@ -17,9 +17,13 @@ individual agent conversation — is the durable source of truth. Claude Code, C
 Antigravity, and future coding agents all read the same documents and follow the same
 loop.
 
-The application code (`apps/web`, `apps/api`) is **not built yet**. This repository
-currently contains the canonical documents, agent adapters, feature memory, and the
-first feature plan (F-001).
+The application is **built and working end to end** (`apps/api` FastAPI backend,
+`apps/web` Next.js console, `apps/mcp` MCP server). Both core journeys run: existing
+candidates → AI interview, and **people search → outreach** across four real providers
+(Apollo/PDL/Proxycurl/Coresignal — no sample data; PDL verified live). Plus Settings
+(provider keys, live-calling, team invites) and an MCP server exposing the platform to
+Claude Code / ChatGPT. See `PROJECT.md` and `docs/features/INDEX.md` for the current status
+and evidence. The Git repository — not any agent conversation — remains the source of truth.
 
 ## Stack
 

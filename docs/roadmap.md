@@ -38,17 +38,24 @@ transition → recruiter review → pipeline decision. Completes the Journey-1 c
 Includes candidate detail (profile / hiring journey / evidence) and the pipeline board as a
 view over persisted state.
 
-## Phase 4 — People search → outreach → progressive profile enrichment
+## Phase 4 — People search → outreach → progressive profile enrichment  *(DONE — real multi-provider sourcing + enrich + outreach; F-006)*
 
-Build search criteria → Apollo search → rank/display → recruiter selects → add to job at the
-configured sourcing/outreach stage → pre-launch review → outreach call → capture interest +
-configured missing basics → structured result → progressive enrichment (incl. resume request
-via a configured follow-up mechanism, only with verified support) → interested candidate
-progresses into interview stages. Completes Journey 2, which feeds Journey 1.
+Build search criteria (JD-derived) → provider search → recruiter selects a provider and
+candidates → add to job at `SOURCED` (deduped) → enrich contact (reveal phone/email via the
+source provider) → outreach call → `CONTACTED`. **Real data only** across four implemented
+providers (Apollo/PDL/Proxycurl/Coresignal); no sample fabrication — unconfigured/plan-gated
+providers surface honest errors. **PDL verified live.** Deeper enrichment (resume request via a
+verified follow-up mechanism) stays gated on verified support.
 
-**App scaffold (F-005):** FastAPI (routers → Phase 2–3 services, dev-stub auth, webhook
-endpoint) and a Next.js recruiter console (dashboard + guided job creation) now expose the flow
-over HTTP. Real auth, shadcn/ui component styling, candidate/timeline UI, and deployment remain.
+**App scaffold (F-005):** FastAPI routers + Next.js recruiter console expose the flow over
+HTTP; real session-cookie auth, candidate/timeline UI, job hub, Sourcing, and Settings are all
+built. Remaining: shadcn/ui component styling and deployment.
+
+**Settings + team invites (F-007):** per-org provider API keys (write-only), default provider,
+live-calling toggle, team roster, and invitations (one-time link → set password → join).
+
+**MCP server (F-008):** the platform is exposed as ~31 MCP tools (incl. Flow A/B one-shot
+macros) for conversational use from Claude Code / ChatGPT.
 
 ## Phase 5 — Production hardening
 
