@@ -11,8 +11,16 @@ confirmed — treat as unavailable) · `UNSUPPORTED` (confirmed not available).
 **Evidence sources for Hunar (F-001, 2026-09-06):**
 - `[docs]` Hunar external API docs — https://api.voice.hunar.ai/docs/external/
 - `[openapi]` OpenAPI spec — https://api.voice.hunar.ai/docs/external/openapi.json
-- `[live]` read-only authenticated calls run during F-001: `GET /external/v1/agents/`
-  → HTTP 200 (count 171), `GET /external/v1/numbers/` → HTTP 200 (count 0). No calls placed.
+- `[live]` F-001 read-only: `GET /external/v1/agents/` → HTTP 200, `GET /external/v1/numbers/`
+  → HTTP 200 (count 0).
+- `[live-call]` 2026-09-06: a **real outbound call was placed and COMPLETED** via `POST /calls/`
+  (agent "AI Hiring Assistant", callee a consenting test number). Status progressed
+  NOT_STARTED→SCHEDULED→RINGING→IN_PROGRESS→COMPLETED; `answered_by=HUMAN`,
+  `engagement_status=ENGAGED`, `duration_seconds=117`, `call_ended_by=AGENT`. Hunar
+  auto-assigned `from_phone_number` (+9180…599) even though `GET /numbers/` reports count 0 —
+  **the "no from-number" blocker below is superseded.** Structured `result` was `{}` and
+  `recording_url` null on the synchronous `GET /calls/{id}/`; those arrive async via the
+  `call_result_done` / `call_recording_done` webhooks (not exercised in this direct test).
 
 Base URL (verified): `https://api.voice.hunar.ai/external/v1`. Auth: `X-API-Key` header.
 
@@ -23,7 +31,7 @@ Base URL (verified): `https://api.voice.hunar.ai/external/v1`. Auth: `X-API-Key`
 | Authentication | `VERIFIED` | `[live]` `[docs]` | `X-API-Key` header confirmed working against live API. |
 | Agent creation / update | `VERIFIED` | `[openapi]` | `POST/PUT /agents/`. Required: name, voice_persona, agent_prompt, objective, introduction, result_schema (+ language default ENGLISH). Status enum DRAFT/ACTIVE/ARCHIVED. |
 | Runtime / custom variables (per-call context) | `VERIFIED` | `[openapi]` | `custom_data` (key→string) on single & bulk calls; agent exposes `custom_variables`/`required_variables`. **Supports the stage-driven "reuse agent + inject context" model — no per-candidate agents.** |
-| Outbound single call | `VERIFIED` (contract); call not placed | `[openapi]` `[live]` | `POST /calls/`. **Blocker:** `GET /numbers/` count 0 → no provisioned `from_phone_number`; a live test call is not attempted until a number exists. |
+| Outbound single call | `VERIFIED` (live — call placed + COMPLETED) | `[openapi]` `[live-call]` | `POST /calls/` returns 200 with the created call (id, status NOT_STARTED, auto-assigned `from_phone_number`). A real call completed end-to-end 2026-09-06 (answered_by HUMAN, 117s). **Agent gate:** the agent's `required_variables` must all be present in `custom_data` or the API returns 422 (e.g. "AI Hiring Assistant" requires `candidate_name, job_role, company, location`). Earlier "no from-number" blocker is superseded — Hunar assigned one automatically. |
 | Bulk call | `VERIFIED` | `[openapi]` | `POST /calls/bulk/`, `data` 1–10000 items, `remove_invalid_rows`/`remove_duplicate_phone_numbers` default true. |
 | Webhook events (types, payload, signature) | `VERIFIED` | `[docs]` | Events: `call_status_updated`, `call_recording_done`, `call_result_done`, `call_summary`. HMAC-SHA256 over `{timestamp}.{raw_body}`, header `X-Hunar-Signature` (comma-sep for key rotation) + `X-Hunar-Timestamp`. Verifier implemented + unit-checked in `apps/api/app/integrations/hunar`. |
 | Call status / result retrieval | `VERIFIED` | `[openapi]` `[live]` | `GET /calls/{id}/` returns status, `result`, `recording_url`, durations, engagement/answered_by, retry fields. List paginates (`count/next/previous/results`, calls page_size ≤ 200). |

@@ -129,7 +129,15 @@ This file is the resume point for any agent. Keep it current.
 ## Risks / open questions
 
 - Apollo Search 403 (key lacks API access). Provider choice pending.
-- No provisioned Hunar number → no live outbound call; Hunar key time-limited (~3 days from 2026-09-04).
+- **Hunar live call VERIFIED (2026-09-06):** a real `POST /calls/` completed end-to-end to a
+  consenting number (answered_by HUMAN, 117s, ended_by AGENT). A `from_phone_number` is
+  auto-assigned despite `/numbers/` count 0, so the old "no number" blocker is gone. BUT the
+  **platform does not yet place calls itself**: `HunarClient.create_call` is an unimplemented
+  stub, `InterviewService.launch_ai_stage` only *builds* the payload and uses a placeholder
+  `agent_id`. To wire real calls in-product: implement the HTTP client, provision/select a real
+  agent per stage, map the agent's `required_variables` into `custom_data` (missing keys → 422),
+  run it in a Celery task, and register a public webhook URL for `call_result_done` /
+  `call_recording_done` (structured result + recording arrive async, not on the sync GET).
 - **Test suite truncates the dev DB:** the HTTP test fixtures run `TRUNCATE organizations …
   CASCADE`, so running `pytest` against the same `DATABASE_URL` used for a live demo wipes
   demo data (incl. the demo account). Re-seed the demo account after a full test run, or use a
