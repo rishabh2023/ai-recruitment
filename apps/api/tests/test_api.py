@@ -75,6 +75,12 @@ def test_full_flow(client):
     ).json()
     jc_id = jc["id"]
 
+    # list candidates for the job (display fields + resolved stage name)
+    lst = client.get(f"/jobs/{jid}/candidates", headers=h).json()
+    assert len(lst) == 1
+    assert lst[0]["candidate"]["full_name"] == "Asha"
+    assert lst[0]["current_stage_name"]  # resolved, not just an id
+
     launch = client.post(f"/job-candidates/{jc_id}/launch", headers=h).json()
     assert launch["normalized_status"] == "QUEUED"
     assert "collect" in launch["hunar_payload"]["custom_data"]
@@ -90,5 +96,7 @@ def test_full_flow(client):
     assert r2.json()["duplicate"] is True  # idempotent
 
     tl = client.get(f"/job-candidates/{jc_id}/timeline", headers=h).json()
+    assert tl["candidate"]["full_name"] == "Asha"
+    assert tl["stage_runs"][0]["stage_name"]  # resolved stage name
     assert any(f["field_key"] == "expected_ctc" for f in tl["facts"])
     assert tl["calls"][0]["normalized_status"] == "COMPLETED"

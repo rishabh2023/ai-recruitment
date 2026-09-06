@@ -92,6 +92,24 @@ class JobCandidateOut(ORMModel):
     pipeline_state: str | None
 
 
+class CandidateSummary(BaseModel):
+    """Candidate identity fields recruiters see (never Hunar/telephony internals)."""
+
+    id: UUID
+    full_name: str | None
+    phone: str | None
+    email: str | None
+    location: str | None
+
+
+class JobCandidateListItem(BaseModel):
+    id: UUID  # job_candidate id
+    candidate: CandidateSummary
+    current_stage_id: UUID | None
+    current_stage_name: str | None
+    pipeline_state: str | None
+
+
 class LaunchOut(BaseModel):
     call_id: UUID
     normalized_status: str
@@ -100,6 +118,7 @@ class LaunchOut(BaseModel):
 
 class TimelineOut(BaseModel):
     job_candidate: JobCandidateOut
+    candidate: CandidateSummary
     stage_runs: list[dict]
     calls: list[dict]
     facts: list[dict]

@@ -103,15 +103,15 @@ export default function Dashboard() {
       )}
 
       {jobs.map((j) => (
-        <div className="card" key={j.id}>
+        <Link className="card cardlink" key={j.id} href={`/jobs/${j.id}/candidates`}>
           <div className="row" style={{ justifyContent: "space-between" }}>
             <div>
               <div style={{ fontWeight: 600 }}>{j.title}</div>
-              <div className="muted" style={{ fontSize: 13 }}>{j.id}</div>
+              <div className="muted" style={{ fontSize: 13 }}>View candidates →</div>
             </div>
             <span className={`badge ${j.status}`}>{j.status}</span>
           </div>
-        </div>
+        </Link>
       ))}
     </main>
   );

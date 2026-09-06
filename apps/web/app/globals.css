@@ -39,4 +39,38 @@ label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px
 .step { border-left: 2px solid var(--border); padding-left: 16px; margin-bottom: 20px; }
 .step.done { border-color: var(--ok); }
 .error { color: #ff6b6b; font-size: 14px; }
+.ok { color: var(--ok); font-size: 14px; }
 pre { background: #0f1117; border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow: auto; }
+
+/* Clickable cards */
+a.card.cardlink { display: block; color: inherit; }
+a.card.cardlink:hover { border-color: var(--accent); }
+
+/* Sections */
+section { margin-bottom: 24px; }
+section > h3 { margin: 0 0 10px; }
+h4 { margin: 16px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+
+/* Key/value profile list */
+dl.kv { display: grid; grid-template-columns: 120px 1fr; gap: 6px 12px; margin: 0; }
+dl.kv dt { color: var(--muted); font-size: 13px; }
+dl.kv dd { margin: 0; }
+
+/* Timeline */
+ol.timeline { list-style: none; margin: 0; padding: 0; }
+
+/* Status badges (stage runs + calls) */
+.badge.status-COMPLETED, .badge.status-READY { color: var(--ok); border-color: var(--ok); }
+.badge.status-NEEDS_REVIEW, .badge.status-AWAITING_RESULT, .badge.status-SCHEDULED,
+.badge.status-QUEUED, .badge.status-IN_PROGRESS { color: var(--warn); border-color: var(--warn); }
+.badge.status-FAILED, .badge.status-CANCELLED, .badge.status-BLOCKED { color: #ff6b6b; border-color: #ff6b6b; }
+
+/* Facts table */
+table.facts { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.facts th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 4px 8px; }
+table.facts td { padding: 6px 8px; border-top: 1px solid var(--border); }
+
+@media (max-width: 640px) {
+  dl.kv { grid-template-columns: 1fr; }
+  dl.kv dt { margin-top: 6px; }
+}

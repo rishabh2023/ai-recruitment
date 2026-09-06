@@ -57,9 +57,59 @@ export const api = {
   approveWorkflow: (jobId: string, vid: string) =>
     req<WorkflowVersion>(`/jobs/${jobId}/workflow/versions/${vid}/approve`, { method: "POST" }),
   activateJob: (jobId: string) => req<Job>(`/jobs/${jobId}/activate`, { method: "POST" }),
+
+  // candidates
+  listCandidates: (jobId: string) => req<JobCandidateListItem[]>(`/jobs/${jobId}/candidates`),
+  importCandidate: (jobId: string, body: CandidateImport) =>
+    req<JobCandidateOut>(`/jobs/${jobId}/candidates`, { method: "POST", body: JSON.stringify(body) }),
+  timeline: (jcId: string) => req<Timeline>(`/job-candidates/${jcId}/timeline`),
+  // Returns Hunar internals in hunar_payload; the UI intentionally ignores that (recruiters
+  // see product concepts only, never telephony/agent internals).
+  launch: (jcId: string) =>
+    req<{ call_id: string; normalized_status: string }>(`/job-candidates/${jcId}/launch`, { method: "POST" }),
 };
 
 export type Job = { id: string; title: string; status: string; created_at: string };
 export type JobVersion = { id: string; version: number; confirmed: boolean; extracted: Record<string, unknown> };
 export type WorkflowVersion = { id: string; version: number; approved: boolean };
 export type Stage = { id: string; stage_order: number; name: string; execution_type: string };
+
+export type CandidateSummary = {
+  id: string;
+  full_name: string | null;
+  phone: string | null;
+  email: string | null;
+  location: string | null;
+};
+export type JobCandidateOut = {
+  id: string;
+  job_id: string;
+  candidate_id: string;
+  current_stage_id: string | null;
+  pipeline_state: string | null;
+};
+export type JobCandidateListItem = {
+  id: string;
+  candidate: CandidateSummary;
+  current_stage_id: string | null;
+  current_stage_name: string | null;
+  pipeline_state: string | null;
+};
+export type CandidateImport = {
+  full_name: string;
+  phone?: string;
+  email?: string;
+  location?: string;
+  source?: string;
+  known_facts?: Record<string, string>;
+};
+export type StageRun = { id: string; stage_id: string; stage_name: string | null; status: string };
+export type CallItem = { id: string; normalized_status: string; hunar_call_id: string | null };
+export type Fact = { field_key: string; value: string | null; source: string | null };
+export type Timeline = {
+  job_candidate: JobCandidateOut;
+  candidate: CandidateSummary;
+  stage_runs: StageRun[];
+  calls: CallItem[];
+  facts: Fact[];
+};
