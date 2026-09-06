@@ -1,11 +1,11 @@
 """Sourcing endpoints — People Search & Outreach (Flow B).
 
 - GET  /jobs/{job_id}/sourcing/suggested-query  → JD-derived starting query
-- POST /jobs/{job_id}/sourcing/search           → run people search (with safe fallback)
+- POST /jobs/{job_id}/sourcing/search           → run people search (with transparent Auto retry)
 - POST /jobs/{job_id}/sourcing/add              → add selected candidates to the pipeline
 
-Recruiters never see provider internals beyond a plain provider label and a notice when the
-result is sample/degraded.
+Recruiters see a provider label and an actionable notice when the result is sample, degraded,
+or Auto broadened.
 """
 
 from __future__ import annotations
@@ -45,6 +45,17 @@ def _job_or_404(session: Session, principal: Principal, job_id: UUID) -> Job:
     job = session.get(Job, job_id)
     if job is None or job.org_id != principal.org_id:
         raise DomainError("Job not found.", code="not_found", status_code=404)
+    return job
+
+
+def _active_job_or_conflict(session: Session, principal: Principal, job_id: UUID) -> Job:
+    job = _job_or_404(session, principal, job_id)
+    if job.status == "archived":
+        raise DomainError(
+            "This role is inactive. Reactivate it before sourcing candidates.",
+            code="conflict",
+            status_code=409,
+        )
     return job
 
 
@@ -91,7 +102,7 @@ def suggested_query(job_id: UUID, session: Session = Depends(get_session), princ
 
 @router.post("/search", response_model=PeopleSearchOut)
 def search(job_id: UUID, body: PeopleSearchIn, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
-    job = _job_or_404(session, principal, job_id)
+    job = _active_job_or_conflict(session, principal, job_id)
     if body.page_size < 1 or body.page_size > 100:
         raise DomainError("page_size must be 1..100.", code="validation_error", status_code=422)
     if body.page < 1:
@@ -119,13 +130,14 @@ def search(job_id: UUID, body: PeopleSearchIn, session: Session = Depends(get_se
         page=outcome.result.page,
         has_more=outcome.result.has_more,
         suggested_query=_query_to_schema(query),
+        applied_query=_query_to_schema(outcome.applied_query),
         candidates=[_candidate_out(c) for c in outcome.result.candidates],
     )
 
 
 @router.post("/add", response_model=SourceCandidatesOut, status_code=201)
 def add_candidates(job_id: UUID, body: SourceCandidatesIn, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
-    job = _job_or_404(session, principal, job_id)
+    job = _active_job_or_conflict(session, principal, job_id)
     if not body.candidates:
         raise DomainError("Select at least one candidate to add.", code="validation_error", status_code=422)
     selections = [

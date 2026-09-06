@@ -66,6 +66,27 @@ class AnthropicLLMProvider:
         # Deterministic, reviewable structure; the recruiter approves before it runs.
         return self._fallback.draft_workflow(extracted)
 
+    def read_pdf_text(self, pdf_bytes: bytes) -> str:
+        """Transcribe a (typically scanned/image-only) PDF JD to plain text via Claude's native
+        PDF reading. The caller bounds size/pages before calling this. Returns "" on any failure
+        so the upload path can fall back to asking the recruiter to paste."""
+        import base64
+
+        b64 = base64.standard_b64encode(pdf_bytes).decode("ascii")
+        try:
+            resp = self._client.messages.create(
+                model=self._model,
+                max_tokens=4096,
+                messages=[{"role": "user", "content": [
+                    {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": b64}},
+                    {"type": "text", "text": "This PDF is a job description. Transcribe its full text as plain text. Return ONLY the transcribed job description — no preamble, no commentary."},
+                ]}],
+            )
+            return "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
+        except anthropic.APIError as exc:
+            logger.warning("Anthropic PDF read failed (%s).", exc)
+            return ""
+
 
 def _strip_fences(s: str) -> str:
     s = s.strip()

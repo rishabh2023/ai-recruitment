@@ -64,6 +64,25 @@ class ActivityItem(BaseModel):
     created_at: datetime
 
 
+class AuditLogItem(BaseModel):
+    id: UUID
+    action: str
+    entity_type: str
+    entity_id: UUID | None
+    from_state: str | None
+    to_state: str | None
+    reason: str | None
+    actor_email: str | None
+    created_at: datetime
+
+
+class AuditPage(BaseModel):
+    items: list[AuditLogItem]
+    total: int
+    page: int
+    page_size: int
+
+
 # --- jobs ---
 class JobCreateIn(BaseModel):
     title: str
@@ -80,11 +99,39 @@ class JobVersionIn(BaseModel):
     jd_text: str
 
 
+class TidyTextIn(BaseModel):
+    text: str
+
+
+class TidyTextOut(BaseModel):
+    text: str
+
+
 class JobVersionOut(ORMModel):
     id: UUID
     version: int
     confirmed: bool
+    jd_text: str
     extracted: dict
+
+
+class FunnelStageOut(BaseModel):
+    stage_id: UUID
+    stage_order: int
+    name: str
+    execution_type: str
+    reached: int  # candidates whose furthest-reached stage is at or beyond this one
+    current: int  # candidates sitting in this stage now (not rejected/completed)
+    reached_pct: float  # reached / total, 0..100 (0 when no candidates)
+
+
+class FunnelOut(BaseModel):
+    total: int
+    in_progress: int
+    rejected: int
+    completed: int
+    completion_pct: float  # completed / total, 0..100
+    stages: list[FunnelStageOut]
 
 
 class WorkflowVersionOut(ORMModel):
@@ -143,6 +190,58 @@ class WorkflowStagesIn(BaseModel):
     stages: list[StageEditIn]
 
 
+# --- funnels (org-owned reusable workflow templates) ---
+class FunnelSummaryOut(BaseModel):
+    id: UUID
+    name: str
+    version: int  # latest version number (0 when a funnel somehow has no version)
+    stage_count: int
+    archived: bool
+    created_at: datetime
+
+
+class FunnelStageSpecOut(BaseModel):
+    stage_order: int
+    name: str
+    purpose: str | None
+    execution_type: str
+    information_requirements: list[str]
+    requires_human_approval: bool
+    criteria: list[CriterionOut]
+
+
+class FunnelDetailOut(BaseModel):
+    id: UUID
+    name: str
+    version: int
+    archived: bool
+    stages: list[FunnelStageSpecOut]
+
+
+class FunnelPresetOut(BaseModel):
+    key: str
+    name: str
+    description: str
+    stages: list[FunnelStageSpecOut]
+
+
+class FunnelCreateIn(BaseModel):
+    name: str
+    stages: list[StageEditIn]
+
+
+class FunnelStagesIn(BaseModel):
+    stages: list[StageEditIn]
+
+
+class FunnelRenameIn(BaseModel):
+    name: str
+
+
+class FunnelUseIn(BaseModel):
+    job_id: UUID
+
+
 class CallingPolicyIn(BaseModel):
     allowed_days: list[str] = []  # MON..SUN
     earliest_call_time: str | None = None  # "HH:MM"
@@ -166,6 +265,31 @@ class CandidateImportIn(BaseModel):
     source: str = "import"
     known_facts: dict[str, str] = {}
     starting_stage_id: UUID | None = None
+
+
+class CandidateUpdateIn(BaseModel):
+    full_name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    location: str | None = None
+
+
+class PipelinePage(ORMModel):
+    items: list["JobCandidateListItem"]
+    total: int  # matching the current filter (for "X of N" + pagination)
+    page: int
+    page_size: int
+
+
+class CsvRowError(BaseModel):
+    row: int
+    reason: str
+
+
+class CsvImportResult(BaseModel):
+    added: int
+    skipped: int
+    errors: list[CsvRowError]
 
 
 class JobCandidateOut(ORMModel):
@@ -206,6 +330,18 @@ class JobCandidateListItem(BaseModel):
     current_stage_id: UUID | None
     current_stage_name: str | None
     pipeline_state: str | None
+
+
+class OrgCandidateListItem(BaseModel):
+    """A candidate participation across the whole org (candidate + which job)."""
+
+    id: UUID  # job_candidate id
+    candidate: CandidateSummary
+    job_id: UUID
+    job_title: str
+    current_stage_name: str | None
+    pipeline_state: str | None
+    created_at: datetime
 
 
 class LaunchOut(BaseModel):
@@ -272,13 +408,14 @@ class ExternalCandidateOut(BaseModel):
 
 class PeopleSearchOut(BaseModel):
     provider: str  # provider that produced these results
-    requested_provider: str  # provider the platform is configured to use
+    requested_provider: str  # manually requested provider, or "auto"
     is_sample: bool  # True when these are sample profiles, not live data
     notice: str | None  # shown to the recruiter when the result is degraded/sample
     total: int | None
     page: int
     has_more: bool
-    suggested_query: PeopleSearchIn  # the JD-derived query used (echoed for the UI)
+    suggested_query: PeopleSearchIn  # original recruiter/JD query
+    applied_query: PeopleSearchIn  # query that produced results (may be Auto-broadened)
     candidates: list[ExternalCandidateOut]
 
 
@@ -357,6 +494,7 @@ class AcceptInviteIn(BaseModel):
 
 
 class SettingsUpdateIn(BaseModel):
+    org_name: str | None = None
     default_provider: str | None = None
     live_calls_enabled: bool | None = None
     # provider -> api key. Non-empty sets/replaces; empty string clears. Never echoed back.

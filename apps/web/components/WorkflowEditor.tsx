@@ -1,12 +1,23 @@
 "use client";
 
 import { useState } from "react";
-import { api, type Criterion, type JobWorkflow, type StageEdit } from "@/lib/api";
+import { type Criterion, type StageEdit } from "@/lib/api";
 
 const EXEC = ["ai", "human", "system"] as const;
 
-function toEdit(wf: JobWorkflow): StageEdit[] {
-  return wf.stages.map((s) => ({
+/** The fields both job-workflow stages and funnel stages share (ignores id/stage_order). */
+type StageLike = {
+  name: string;
+  purpose: string | null;
+  execution_type: string;
+  information_requirements: string[];
+  requires_human_approval: boolean;
+  criteria: Criterion[];
+};
+
+/** Convert persisted stage detail (job workflow or funnel) into editable stages. */
+export function stagesToEdit(stages: StageLike[]): StageEdit[] {
+  return stages.map((s) => ({
     name: s.name,
     purpose: s.purpose,
     execution_type: s.execution_type,
@@ -16,18 +27,21 @@ function toEdit(wf: JobWorkflow): StageEdit[] {
   }));
 }
 
+/**
+ * Stage/criteria editor shared by job workflows and funnel templates. It owns the in-memory
+ * stage list and delegates persistence to `onSave`, which returns the normalized stages to
+ * reset the editor to (so the caller controls the API call and any surrounding state).
+ */
 export default function WorkflowEditor({
-  jobId,
-  versionId,
-  initial,
-  onSaved,
+  initialStages,
+  onSave,
+  saveLabel = "Save changes",
 }: {
-  jobId: string;
-  versionId: string;
-  initial: JobWorkflow;
-  onSaved: (wf: JobWorkflow) => void;
+  initialStages: StageEdit[];
+  onSave: (stages: StageEdit[]) => Promise<StageEdit[]>;
+  saveLabel?: string;
 }) {
-  const [stages, setStages] = useState<StageEdit[]>(toEdit(initial));
+  const [stages, setStages] = useState<StageEdit[]>(initialStages);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -70,15 +84,14 @@ export default function WorkflowEditor({
     setBusy(true);
     setError(null);
     try {
-      // normalize empty weights to null
+      // drop criteria rows with no name before persisting
       const clean = stages.map((s) => ({
         ...s,
         criteria: s.criteria.filter((c) => c.name.trim()),
       }));
-      const wf = await api.editWorkflowStages(jobId, versionId, clean);
-      setStages(toEdit(wf));
+      const normalized = await onSave(clean);
+      setStages(normalized);
       setSaved(true);
-      onSaved(wf);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -124,7 +137,7 @@ export default function WorkflowEditor({
         </article>
       ))}
       <div className="workflow-editor-actions">
-        <button className="secondary" onClick={addStage}>+ Add stage</button><div className="row"><span className="muted">{stages.length} stage{stages.length === 1 ? "" : "s"}</span><button onClick={save} disabled={busy || stages.length === 0}>{busy ? "Saving…" : "Save workflow changes"}</button></div>
+        <button className="secondary" onClick={addStage}>+ Add stage</button><div className="row"><span className="muted">{stages.length} stage{stages.length === 1 ? "" : "s"}</span><button onClick={save} disabled={busy || stages.length === 0}>{busy ? "Saving…" : saveLabel}</button></div>
         {saved && <span className="ok" style={{ fontSize: 13 }}>Saved ✓</span>}
       </div>
     </div>

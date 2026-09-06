@@ -5,14 +5,19 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 import AuthScreen from "./AuthScreen";
+import AssistantWidget from "./AssistantWidget";
+import Icon from "./Icon";
 
 type NavItem = { href: string; label: string; icon: string; match: (p: string) => boolean; disabled?: boolean };
 
 const NAV: NavItem[] = [
-  { href: "/", label: "Dashboard", icon: "▤", match: (p) => p === "/" },
-  { href: "/jobs", label: "Jobs", icon: "▦", match: (p) => p.startsWith("/jobs") || p.startsWith("/job-candidates") },
-  { href: "/sourcing", label: "Sourcing", icon: "◎", match: (p) => p.startsWith("/sourcing") },
-  { href: "/settings", label: "Settings", icon: "⚙", match: (p) => p.startsWith("/settings") },
+  { href: "/", label: "Dashboard", icon: "dashboard", match: (p) => p === "/" },
+  { href: "/jobs", label: "Jobs", icon: "jobs", match: (p) => p.startsWith("/jobs") },
+  { href: "/candidates", label: "Candidates", icon: "candidates", match: (p) => p.startsWith("/candidates") || p.startsWith("/job-candidates") },
+  { href: "/funnels", label: "Funnels", icon: "funnels", match: (p) => p.startsWith("/funnels") },
+  { href: "/sourcing", label: "Sourcing", icon: "sourcing", match: (p) => p.startsWith("/sourcing") },
+  { href: "/audit", label: "Audit logs", icon: "audit", match: (p) => p.startsWith("/audit") },
+  { href: "/settings", label: "Settings", icon: "settings", match: (p) => p.startsWith("/settings") },
 ];
 
 export default function AppShell({ children }: { children: ReactNode }) {
@@ -51,7 +56,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           {NAV.map((item) =>
             item.disabled ? (
               <span key={item.label} className="nav-item disabled" title="Coming soon">
-                <span className="nav-icon">{item.icon}</span>
+                <span className="nav-icon"><Icon name={item.icon} size={18} /></span>
                 {item.label}
                 <span className="soon">soon</span>
               </span>
@@ -61,7 +66,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 href={item.href}
                 className={`nav-item ${item.match(pathname) ? "active" : ""}`}
               >
-                <span className="nav-icon">{item.icon}</span>
+                <span className="nav-icon"><Icon name={item.icon} size={18} /></span>
                 {item.label}
               </Link>
             ),
@@ -77,6 +82,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <button className="secondary signout" onClick={logout}>Sign out</button>
       </aside>
       <div className="content">{children}</div>
+      <AssistantWidget />
     </div>
   );
 }

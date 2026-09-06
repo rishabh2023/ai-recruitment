@@ -1,61 +1,147 @@
 # AI Recruitment Workflow
 
-A production-oriented AI recruitment and workforce operations platform.
-
-**Hunar** is the voice / conversation execution layer. **This platform** owns the
-product workflow, orchestration, state, data, UI, approvals, policies, evidence, and
-operational visibility.
+A production-oriented AI recruitment and workforce-operations platform. **Hunar** is the
+voice / conversation execution layer; **this platform** owns the product workflow,
+orchestration, state, data, UI, approvals, policies, evidence, and operational visibility.
 
 > Tell the platform who you need to hire → confirm how you want to evaluate them →
-> add or find candidates → let the platform orchestrate the hiring workflow →
+> add or find candidates → let the platform orchestrate the hiring funnel →
 > review evidence and make decisions.
 
-## What this repository is
+The application is **built and working end to end**: `apps/api` (FastAPI backend),
+`apps/web` (Next.js console), and `apps/mcp` (MCP server). Both core journeys run —
+existing candidates → AI interview, and people-search → outreach across four real providers
+(Apollo / PDL / Proxycurl / Coresignal; PDL verified live) — plus Settings, team invites,
+CSV bulk import, a paginated candidate pipeline, and a conversational copilot.
 
-This is an **agent-neutral engineering foundation**. The Git repository — not any
-individual agent conversation — is the durable source of truth. Claude Code, Codex,
-Antigravity, and future coding agents all read the same documents and follow the same
-loop.
+---
 
-The application is **built and working end to end** (`apps/api` FastAPI backend,
-`apps/web` Next.js console, `apps/mcp` MCP server). Both core journeys run: existing
-candidates → AI interview, and **people search → outreach** across four real providers
-(Apollo/PDL/Proxycurl/Coresignal — no sample data; PDL verified live). Plus Settings
-(provider keys, live-calling, team invites) and an MCP server exposing the platform to
-Claude Code / ChatGPT. See `PROJECT.md` and `docs/features/INDEX.md` for the current status
-and evidence. The Git repository — not any agent conversation — remains the source of truth.
+## Repository layout
+
+```
+apps/
+  api/    FastAPI modular monolith — routers, per-module services, Alembic migrations, tests
+  web/    Next.js + React + TypeScript recruiter console
+  mcp/    MCP server exposing the platform to Claude Code / ChatGPT
+docs/     Canonical docs (architecture, domain, interfaces, experience, features, vendor matrix)
+infra/    Infrastructure / deployment assets
+scripts/  Dev + CI helper scripts
+compose.yaml   Local Postgres + Redis
+```
 
 ## Stack
 
-| Concern            | Choice                                     |
-| ------------------ | ------------------------------------------ |
-| Frontend           | Next.js + React + TypeScript + shadcn/ui   |
-| Backend            | FastAPI + Python (modular monolith)        |
-| Database           | PostgreSQL (durable business source of truth) |
-| Background work    | Redis + Celery                             |
-| Voice execution    | Hunar                                      |
-| People search      | Apollo                                     |
-| Observability      | OpenTelemetry + Sentry                     |
-| Platform LLM       | JD understanding, role classification, draft workflow/rubric generation only |
+| Concern         | Choice                                             |
+| --------------- | -------------------------------------------------- |
+| Frontend        | Next.js 15 + React + TypeScript                    |
+| Backend         | FastAPI + Python 3.12+ (modular monolith)          |
+| Database        | PostgreSQL (durable business source of truth)      |
+| Background work | Redis + Celery                                     |
+| Voice execution | Hunar                                              |
+| People search   | Apollo / PDL / Proxycurl / Coresignal              |
+| Platform LLM    | Claude (JD understanding, drafting) — optional     |
+| Observability   | OpenTelemetry + Sentry                             |
 
-## Start here
+---
 
-1. [`PROJECT.md`](PROJECT.md) — the canonical one-page orientation.
-2. [`docs/intent.md`](docs/intent.md) — who this is for and the problem it solves.
-3. [`docs/architecture.md`](docs/architecture.md) — the modular monolith and the canonical stage-driven model.
-4. [`docs/agent-handbook.md`](docs/agent-handbook.md) — the required loop every agent follows.
-5. [`docs/roadmap.md`](docs/roadmap.md) — the phased plan (Phase 0 → Phase 6).
+## Quick start (local)
 
-Agent entry points: [`CLAUDE.md`](CLAUDE.md) (Claude Code),
-[`AGENTS.md`](AGENTS.md) (Codex), [`.agents/rules/`](.agents/rules) (Antigravity).
+**Prerequisites:** Docker (Postgres + Redis), Python 3.12+, Node 18+.
 
-## Ground rules
+### 1. Configure environment
+
+```bash
+cp .env.example .env                          # fill in values (all optional for the offline stub)
+cp apps/web/.env.local.example apps/web/.env.local
+```
+
+`.env` and every nested `.env` / `.env.local` are git-ignored — **never commit real keys.**
+With all keys blank the app still runs: JD extraction uses a deterministic offline stub,
+sourcing reports "provider not configured", and calls stay queued (no live dialing).
+
+### 2. Start infrastructure
+
+```bash
+docker compose up -d postgres redis
+```
+
+### 3. Backend (`apps/api`) → http://localhost:8000
+
+```bash
+cd apps/api
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+alembic upgrade head
+uvicorn app.main:app --reload
+```
+
+### 4. Frontend (`apps/web`) → http://localhost:3000
+
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+
+The web app talks to the backend via `NEXT_PUBLIC_API_URL` (default `http://localhost:8000`).
+Use **Sign up** (or the dev bootstrap) to create the first org + admin.
+
+### 5. MCP server (optional)
+
+See [`apps/mcp/README.md`](apps/mcp/README.md) to drive the platform conversationally from
+Claude Code / ChatGPT.
+
+---
+
+## Tests
+
+```bash
+cd apps/api && source .venv/bin/activate && python -m pytest    # backend (needs Postgres)
+cd apps/web && npx tsc --noEmit                                 # frontend type-check
+```
+
+Backend tests target a dedicated `*_test` database (auto-derived from `DATABASE_URL`, or set
+`TEST_DATABASE_URL`) so they never touch dev data.
+
+---
+
+## Key capabilities
+
+- **Jobs & funnels** — create a role, enter/upload a JD (PDF text is auto-cleaned; scanned PDFs
+  fall back to LLM vision), confirm extracted details, draft & approve the hiring **funnel**
+  (stages + success criteria), activate.
+- **Pipeline** — server-paginated, searchable, stage-filterable candidate table. Add candidates
+  in place (with a required country-code selector → E.164 phones) or **bulk-import a CSV**
+  (name + mobile mandatory). Per-role de-duplication. Inline edit.
+- **AI interviews** — launch AI stages as Hunar calls; evidence, criteria scores, and decisions
+  are persisted and audited. Calls dial during acceptable hours.
+- **Sourcing** — people search across four providers with recall-tuned queries; add matches to
+  the pipeline.
+- **Settings** — provider keys, live-calling switch, team invites.
+- **Audit log** — paginated, searchable, immutable record of consequential actions.
+
+---
+
+## Deployment (in progress)
+
+- **Frontend** → AWS Amplify (Next.js). Set `NEXT_PUBLIC_API_URL` to the backend's public URL.
+- **Backend** → EC2 via GitHub Actions CI/CD (Docker image from `apps/api/Dockerfile`; run a
+  Celery worker with `CELERY_TASK_ALWAYS_EAGER=0`). Production must set `SESSION_COOKIE_SECURE=1`
+  and a correct `CORS_ORIGINS`.
+
+Secrets are supplied via the platform's environment/secret store — **never** committed to git.
+
+---
+
+## Documentation & ground rules
+
+Start with [`PROJECT.md`](PROJECT.md), then [`docs/architecture.md`](docs/architecture.md),
+[`docs/interfaces.md`](docs/interfaces.md), and [`docs/features/INDEX.md`](docs/features/INDEX.md).
+Agent entry points: [`CLAUDE.md`](CLAUDE.md), [`AGENTS.md`](AGENTS.md).
 
 - No vendor capability is treated as fact unless marked `VERIFIED` in
   [`docs/vendor-capability-matrix.md`](docs/vendor-capability-matrix.md).
-- No recruiter-facing UI control is built around an unverified capability.
-- Consequential AI-generated configuration (workflows, rubrics, stage criteria) requires
-  human approval before it executes.
-- The platform stays a modular monolith. No microservices, Kubernetes, Kafka, custom
-  telephony, custom speech infra, generic multi-vendor voice abstraction, or deep-agent
-  framework unless explicitly requested later.
+- Consequential AI-generated configuration (funnels, rubrics, criteria) requires human approval
+  before it executes.
+- The platform stays a modular monolith — no microservices/Kubernetes/Kafka unless explicitly
+  requested later.

@@ -58,3 +58,9 @@ class LLMProvider(Protocol):
     def extract_job(self, jd_text: str) -> ExtractedJob: ...
 
     def draft_workflow(self, extracted: ExtractedJob) -> list[DraftStage]: ...
+
+    def read_pdf_text(self, pdf_bytes: bytes) -> str:
+        """Transcribe a PDF's job description to plain text using the model's native PDF
+        reading (handles scanned/image-only PDFs that local text extraction can't). Providers
+        without vision return "" so the caller falls back to asking the recruiter to paste."""
+        return ""

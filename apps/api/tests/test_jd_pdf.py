@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from app.api.pdf import PdfExtractionError, extract_pdf_text
+from app.api.pdf import PdfExtractionError, extract_pdf_text, tidy_jd_text
 from app.db.session import engine
 from app.main import app
 
@@ -32,6 +32,32 @@ def make_pdf(body_text: str) -> bytes:
         out += b"%010d 00000 n \n" % off
     out += b"trailer<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF" % (len(objs) + 1, xref_pos)
     return bytes(out)
+
+
+# --- text reflow (pure) ---
+def test_tidy_rejoins_one_word_per_line_fragments():
+    raw = "We are looking for someone who can deliver\nfeatures\n \nacross\n \nfrontend\n \nand\n \nbackend\n \nsystems."
+    assert tidy_jd_text(raw) == "We are looking for someone who can deliver features across frontend and backend systems."
+
+
+def test_tidy_preserves_headings_and_bullets():
+    raw = "Key Responsibilities\n●  Build things\n●  Ship\n them\nRequired Skills\n○  Python"
+    # bullets stay separate; a lowercase wrapped continuation ("them") folds into its bullet;
+    # headings (capitalized, non-bullet) start their own line.
+    assert tidy_jd_text(raw) == (
+        "Key Responsibilities\n● Build things\n● Ship them\nRequired Skills\n○ Python"
+    )
+
+
+def test_tidy_collapses_double_spaces_and_space_before_punctuation():
+    assert tidy_jd_text("Full  Stack  Engineer  \nExperience with databases :") == (
+        "Full Stack Engineer\nExperience with databases:"
+    )
+
+
+def test_tidy_is_noop_on_clean_text():
+    clean = "Backend Engineer\nWe want a strong Python developer."
+    assert tidy_jd_text(clean) == clean
 
 
 # --- pure extractor ---
@@ -88,3 +114,36 @@ def test_upload_scanned_pdf_without_text_is_rejected(client):
         files={"file": ("scan.pdf", empty_pdf, "application/pdf")},
     )
     assert r.status_code == 422
+
+
+def test_tidy_endpoint_reflows_text(client):
+    jid = _auth_and_job(client)
+    r = client.post(
+        f"/jobs/{jid}/versions/tidy",
+        json={"text": "We deliver\nfeatures\n \nacross\n \nsystems."},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["text"] == "We deliver features across systems."
+
+
+def test_upload_scanned_pdf_falls_back_to_llm_read(client, monkeypatch):
+    """A text-less (scanned) PDF within the size/page bounds is transcribed via the provider's
+    native PDF reader, and the transcribed text runs through the normal extraction path."""
+    from app.api.routers import jobs as jobs_router
+
+    class _VisionProvider:
+        key = "vision-stub"
+
+        def read_pdf_text(self, pdf_bytes: bytes) -> str:
+            return "Backend Engineer Python FastAPI"
+
+    monkeypatch.setattr(jobs_router, "get_llm_provider", lambda: _VisionProvider())
+
+    jid = _auth_and_job(client)
+    empty_pdf = make_pdf("").replace(b"BT /F1 18 Tf 20 120 Td () Tj ET", b" ")
+    r = client.post(
+        f"/jobs/{jid}/versions/upload",
+        files={"file": ("scan.pdf", empty_pdf, "application/pdf")},
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["jd_text"] == "Backend Engineer Python FastAPI"

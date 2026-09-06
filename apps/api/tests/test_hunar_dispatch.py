@@ -16,6 +16,7 @@ from app.modules.candidates.models import CandidateStageRun
 from app.modules.candidates.service import CandidateService
 from app.modules.interviews.dispatch import HunarDispatchError, HunarDispatchService
 from app.modules.interviews.service import InterviewService
+from app.modules.jobs.models import Job
 from app.modules.jobs.service import JobService
 from app.modules.organizations.models import Organization, User
 from app.modules.workflows.models import HunarAgentConfig, JobWorkflowStage
@@ -158,6 +159,21 @@ def test_dispatch_is_idempotent_once_sent(session):
     fake.last_payload = None
     svc.dispatch(call.id)  # already has hunar_call_id → no second POST
     assert fake.last_payload is None
+
+
+def test_dispatch_cancels_queued_call_when_role_becomes_inactive(session):
+    org, user, jc, stage, run, call = _setup(session)
+    JobService(session, user.id).archive_job(session.get(Job, jc.job_id))
+    fake = FakeHunar()
+
+    with pytest.raises(HunarDispatchError, match="inactive"):
+        HunarDispatchService(session, client=fake, actor_user_id=user.id).dispatch(call.id)
+
+    assert fake.last_payload is None
+    assert call.normalized_status == "CANCELLED"
+    assert run.status == StageRunState.CANCELLED.value
+    actions = [a.action for a in session.scalars(select(AuditEvent)).all()]
+    assert "interview.dispatch_cancelled_inactive_job" in actions
 
 
 # --- rejected / unanswered call handling ---

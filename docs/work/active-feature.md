@@ -2,6 +2,235 @@
 
 This file is the resume point for any agent. Keep it current.
 
+## Pipeline scale, CSV import, JD polish, sourcing recall, dedup — done this session
+
+Backend (`apps/api`, all green — 143 tests):
+- **JD from PDF**: `tidy_jd_text` reflows ragged pypdf output into readable prose (bullets/headings
+  kept); scanned/image-only PDFs fall back to the LLM's native PDF reading (`read_pdf_text`,
+  bounded 2 MB / 4 pages). New `POST /jobs/{id}/versions/tidy` for in-place cleanup.
+- **Pipeline at scale**: `GET /jobs/{id}/pipeline` — server-paginated + filterable (stage/state/q).
+- **CSV bulk import**: `POST /jobs/{id}/candidates/import-csv` — name+mobile mandatory, optional
+  `country_code`, per-row errors, per-phone de-dupe. Phones normalized to E.164 (`_to_e164`).
+- **Candidate edit**: `PATCH /job-candidates/{id}` (name/phone/email/location).
+- **Per-role de-duplication**: manual add + CSV reject a phone/email already in that job (409),
+  country-code tolerant (suffix match).
+- **Audit log**: `GET /dashboard/audit` now paginated + search (`?page=&page_size=&q=`).
+- **Sourcing recall fix** (`people_search/pdl.py`): title `match_phrase` on a cleaned title (was
+  exact `terms` → zero results), skills as `should` boosts (not AND-ed), invalid seniority levels
+  dropped, no `minimum_should_match` (PDL rejects it). JD query now returns ~63k instead of 0.
+- New job ops: `POST /jobs/{id}/archive`, `DELETE /jobs/{id}`; `GET /jobs/{id}/funnel`,
+  `GET /jobs/{id}/version`.
+
+Web (`apps/web`, typechecks clean):
+- **"Workflow" → "Funnel"** in all recruiter-facing copy (code identifiers unchanged). Existing
+  jobs **draft the funnel in place** (no wizard restart); `?tab=` deep-links the workspace tabs.
+- **Pipeline redesign**: paginated table with stage filter chips + search + Edit per row; empty
+  state shows the two entry paths. Old `/jobs/{id}/candidates` page redirects to `?tab=pipeline`.
+- **Add candidate modal** (in place, manual + CSV tabs) with a required **country-code selector**;
+  "Add candidates"/"Manage candidates" open the Pipeline tab.
+- **Success criteria** listed on funnel stage cards; **Clean up formatting** button on the JD editor.
+- Shared `Modal` focus fix (was stealing focus from inputs each keystroke).
+
+Docs updated: `interfaces.md`, `experience.md`, `vendor-capability-matrix.md` (PDL query + Hunar
+E.164/scheduling notes). Hunar learning: callee number must be E.164; a dispatched call sits at
+`SCHEDULED` and dials during acceptable calling hours (won't cold-dial at night).
+
+## Dashboard premium redesign + icon system, done this session
+
+- New inline SVG icon set (`components/Icon.tsx`) replacing the unicode-glyph sidebar icons;
+  icons now on sidebar nav and dashboard stat cards.
+- First-run **launch pad**: when the org has no jobs, the dashboard shows a gradient hero
+  ("From job description to hired — in one place") + a 3-step guided path (Add your JD →
+  Shape the funnel → Add candidates & hire with confidence) instead of an all-zero stat wall.
+  Populated orgs still get the stats + attention + jobs sections.
+- **Audit Trail removed from the dashboard** (it lives in the Audit logs tab now).
+- Assistant **FAB is animated** (gradient + gentle attention pulse) with a hover tooltip
+  ("Ask the hiring assistant"); pulse/glow respect prefers-reduced-motion.
+- Verified in-browser (empty org): launch pad + steps render, sidebar icons correct, FAB
+  tooltip shows on hover. Web tsc clean.
+
+## Conversational assistant — Claude tool-use agent, done this session
+
+- Floating **✦ chat launcher** (bottom-right, `components/AssistantWidget.tsx`) on every
+  signed-in page; opens a chat panel (greeting, quick-action chips, message input, reply
+  bubbles + clickable action links).
+- Backend `POST /assistant/chat` (`app/api/routers/assistant.py`): a bounded (≤5 rounds)
+  Claude tool-use loop using `settings.platform_llm_api_key` + `platform_llm_model`
+  (claude-haiku-4-5). Tools are the same product ops the MCP server wraps, hosted in-process
+  and **org-scoped via the request principal/session**: `dashboard_summary`, `list_jobs`,
+  `list_candidates`, `list_funnels` (reads), and `create_job` (creates a draft — reversible).
+- Safety posture: destructive/consequential ops (delete, archive, launch calls, decisions)
+  are deliberately NOT exposed to the model; the system prompt tells it to direct users to the
+  UI for those. No `session.commit()` in tools — the get_session request boundary commits.
+- Verified live (key present in root .env): "how many jobs/candidates" → correct grounded
+  answer via tools; "create a job for a Senior Frontend Engineer" → created a draft + returned
+  an Open link; follow-up "what should I do next" → listed the draft with next steps. Hermetic
+  test `test_assistant_chat_without_key_is_graceful` covers the no-key path.
+- **Step-by-step copilot + human-in-the-loop (this session):** the agent now drives the full
+  new-role flow conversationally — create_job → add_job_description (paste in chat OR upload a
+  **PDF via the 📎 button** in the widget) → get_job → confirm_job_description → draft_workflow.
+  It leads one step at a time and uses tasteful emojis.
+  - **Guardrail — human-in-the-loop:** `confirm_job_description` and `draft_workflow` are
+    consequential; the model proposing them returns a `pending` action instead of executing.
+    The widget shows a **⚠️ Confirm / Cancel** card; on Confirm the client re-POSTs
+    `approve:{tool,args}` and the backend runs that exact action **deterministically** (no LLM
+    re-planning), so approvals can't be misfired. `_needs_confirmation` skips gating an
+    already-satisfied confirm (idempotent) so the flow doesn't loop.
+  - Every job tool is org-scoped + ownership-checked; the model never gets a raw id it can act
+    on without a `list_jobs`/lookup. Approve/activate/delete/archive/launch/decisions remain
+    UI-only. Since the chat is stateless per call, the system prompt tells the model to
+    `list_jobs` to resolve a job by title before acting.
+  - Verified live: gate returns `pending: confirm_job_description`; approving it persists
+    `jd_confirmed=true`; PDF upload path wired via `/jobs/{id}/versions/upload`. Hermetic test
+    `test_assistant_tools_jd_flow_hermetic` covers create→JD→get→confirm→draft + ownership guard.
+  - Follow-ups: streaming responses; confirm gate for any future mutating tools (apply-funnel,
+    add-candidate).
+
+## Audit logs tab + job/candidate delete, done this session
+
+- New **Audit logs** sidebar tab (`/audit`): full org audit trail table (action, entity,
+  from→to change, actor email, timestamp) with search. Backend `GET /dashboard/audit?limit=`
+  → `AuditLogItem[]` (joins actor email). Dashboard "Recent activity" now links to it.
+  Test: `test_audit_log_endpoint`.
+- **Delete a job**: `DELETE /jobs/{id}` (204) — only non-active roles (active must be archived
+  first → 409); cascades JD/workflow/candidates/history; audit row written before delete and
+  survives. Jobs-list Delete uses a **type-to-confirm** dialog (type the job title).
+  `JobService.delete_job`; test `test_delete_job_only_when_not_active`.
+- **Remove a candidate from a job**: `DELETE /job-candidates/{id}` (204) — deletes the
+  participation (cascades stage runs/facts/calls); the candidate person record survives.
+  Candidates-row Delete uses a confirm dialog; test `test_delete_job_candidate_removes_participation`.
+- **Candidate name is now a link** to `/job-candidates/{id}` (the profile/timeline).
+- `ConfirmDialog` gained an optional `requireText` (type-to-confirm) prop.
+- NOTE: mid-session the running server's Demo Org data was wiped (0 jobs/candidates) — the
+  demo job + 7 candidates that existed earlier are gone (audit shows "job deleted"), which is
+  why the candidate profile 404'd on those stale ids. Verified with fresh data that the
+  profile + name-link work (timeline 200). If the demo data is needed, reseed it.
+- Verification: API **118 passed**; web tsc clean; browser-verified the Audit tab, and the
+  candidate profile/name-link/delete with fresh data.
+
+## Funnel presets — predefined starter workflows, done this session
+
+- The Funnels page now shows a **Predefined funnels** section above the org's library: three
+  code-defined starter blueprints (engineering, sales, general). "Use this template" (admin)
+  instantiates a preset into a real, editable funnel via `POST /funnels`, then opens it.
+- Backend: `GET /funnels/presets` → `FunnelPresetOut[]`, sourced from
+  `app/modules/workflows/presets.py` (read-only; presets are never stored/mutated). Registered
+  BEFORE `GET /funnels/{funnel_id}` so the literal path isn't captured by the UUID param.
+- Test: `test_presets_listed_and_usable`. Verification: API **115 passed**; web tsc clean;
+  browser-verified the preset cards render and "Use this template" created a 4-stage funnel.
+
+## Candidates directory — org-wide list, done this session
+
+- New **Candidates** sidebar tab (`/candidates`) listing every candidate participation across
+  all jobs (a person in N jobs appears N times, once per job). Full-width data table: name +
+  contact, job (linked), current stage, pipeline state, added date, Open → (drills to the
+  existing `/job-candidates/{id}` timeline). Client-side search + pipeline-state filter chips.
+- Backend: `GET /candidates` (org-scoped) → `OrgCandidateListItem[]` — joins JobCandidate ↔
+  Job ↔ Candidate, newest first. Test: `test_org_wide_candidate_directory`.
+- New shared `.data-table` styles (responsive: stacks on mobile).
+- Verification: API suite **114 passed**; web `tsc` clean; browser-verified the tab + table
+  render with all candidates and working filters.
+
+## UI polish — archive-anywhere, wider layout, real modals, done this session
+
+- **Archive from any state**: a role can now be archived from `draft` or `active` (was
+  active-only). `JobService.archive_job` allows any non-archived state and is idempotent;
+  `activate_job` gates still apply to reactivation. Test renamed →
+  `test_draft_role_can_be_archived`. Archive action added to each Jobs-list row and kept in
+  the job workspace ("Mark inactive").
+- **Reusable modal + confirmation dialog**: new `components/Modal.tsx` (accessible overlay —
+  role=dialog, Escape/backdrop close, scroll lock, focus) and `components/ConfirmDialog.tsx`
+  (async onConfirm with busy + inline error, `danger` variant). Replaced all `window.confirm`
+  archive prompts (jobs list, job workspace, funnel detail) with `ConfirmDialog`.
+- **Full-width layout**: `.container` widened 960→1400px with larger gutters
+  (`40px 48px`, responsive down to `28px 20px` under 900px); `.jobs-page`/`.dashboard-page`
+  bumped 1240→1400px. Buttons no longer wrap (`white-space: nowrap`; page-head actions
+  `flex-shrink:0`). Verified full-width on Dashboard, Jobs, Funnels.
+- **Hydration error fix**: added `suppressHydrationWarning` to `<body>` in `app/layout.tsx`
+  — a browser extension (ColorZilla `cz-shortcut-listen`) mutates `<body>` before hydration;
+  console now clean. Not an app bug.
+- Verification: API suite **113 passed**; web `tsc --noEmit` clean; browser-verified the
+  archive confirm modal, archived-state transition, wide layouts, and a clean error console.
+
+## Funnels — reusable workflow-template library, done this session
+
+- New **Funnels** sidebar section (`/funnels`) — the org's reusable hiring-funnel library
+  (backed by the pre-existing `WorkflowTemplate` model, which had no API/UI until now).
+  Design: `docs/superpowers/specs/2026-09-06-funnels-library-design.md`.
+- One funnel → many jobs. "Use in a job" copies the funnel's stages into that job's own
+  versioned workflow snapshot (unapproved draft), so jobs stay independent; editing a funnel
+  creates a **new template version** and never disturbs jobs already using it.
+- Endpoints (`app/api/routers/funnels.py`, writes admin-only): `GET/POST /funnels`,
+  `GET /funnels/{id}`, `PUT /funnels/{id}/stages` (→ new version), `PATCH /funnels/{id}`
+  (rename), `POST /funnels/{id}/archive`, `POST /funnels/{id}/use` ({job_id}).
+- Rich stage data (purpose/info/criteria/approval) is stored in `WorkflowStageTemplate.config`
+  JSONB; `WorkflowService.adopt_template` now copies all of it into job stages. Migration
+  `e7c1d2f3a4b5` adds nullable `workflow_templates.archived_at` (funnels archive, not delete).
+- `WorkflowEditor` was refactored to generic props (`initialStages` + `onSave` callback +
+  `saveLabel`); both job call sites (`app/jobs/new`, `app/jobs/[id]`) updated — no behavior
+  change for jobs. The same editor now drives job workflows and funnels.
+- Verification: `tests/test_funnels.py` **6 passed**; full API suite **113 passed**; web
+  `tsc --noEmit` clean. Browser-verified signed in as admin: created a funnel, applied it to
+  the "Backend Engineer (via MCP)" job (job went to "Workflow v1 · draft", AI stages 1, and
+  the hiring-funnel section charted the adopted stage).
+- Note: migration applied to BOTH the dev DB and `recruitment_test` (the test DB persists, so
+  `create_all` alone would not add the new column). Ran `next dev` (never `next build`) to
+  compile/verify — do not run `next build` against a live dev server.
+
+## Job workspace — JD view/edit + hiring funnel, done this session
+
+- The job Overview tab now shows a **Job description** card (the latest version's raw
+  `jd_text`, with a version/confirmed badge). Recruiters can **edit** it — Save creates a new
+  `JobVersion` via the existing `POST /jobs/{id}/versions` flow (re-extraction runs, stays a
+  draft until confirmed), and unconfirmed versions offer a Confirm action inline.
+- A **Hiring funnel** section shows cumulative-reached counts per stage with conversion %
+  and top-line tiles (total / in progress / rejected / completed / completion %).
+- New endpoints (design: `docs/superpowers/specs/2026-09-06-job-jd-and-funnel-design.md`):
+  - `GET /jobs/{id}/version` → latest `JobVersion` (now includes `jd_text`) or `null`.
+  - `GET /jobs/{id}/funnel` → `FunnelOut`; funnel math is server-side (Postgres is the source
+    of truth). COMPLETED counts toward every stage; a candidate's furthest-reached stage is
+    their `current_stage_id` order (sourced/no-stage candidates sit at the top only).
+- Verification: `tests/test_api.py` **9 passed** (incl. new funnel + latest-version tests);
+  web `tsc --noEmit` clean; `next build` green; signed-in browser check confirmed both
+  sections render (JD text + confirm bar; funnel tiles; per-stage bars show their empty state
+  on a job with no drafted workflow).
+- Note: running `next build` clobbered the live `next dev` server's `.next` dir mid-session
+  (caused a `Cannot find module './294.js'` runtime error); fixed by clearing `.next` and
+  restarting `next dev`. Don't run `next build` against a repo with a running dev server.
+
+## Jobs — inactive roles, done this session
+
+- Active roles can now be marked **Inactive** (`archived`) from their job workspace and later
+  reactivated. No job, workflow, candidate, call, or audit history is deleted.
+- Inactive roles are filterable on the Jobs page and clearly labeled. They reject new sourcing
+  and new outreach/interview launches with an actionable HTTP 409 until reactivated.
+- Verification: archive/reactivate audit test plus inactive sourcing/launch gate tests pass;
+  full API suite **107 passed**, web typecheck and `git diff --check` passed. Signed-in browser
+  verification remains pending a valid local authenticated session.
+
+## Sourcing — PDL Auto mode, done this session
+
+- The Sourcing UI now defaults to **Auto (recommended)** when People Data Labs is configured;
+  manual provider selection is still available.
+- Auto uses only configured PDL. It runs the exact JD-derived
+  query first and, only after zero results, retries once without seniority (or without
+  location when seniority is absent). The UI identifies Auto/PDL and displays the relaxation;
+  it never silently fans out to other vendors.
+- A missing PDL configuration returns an actionable error instead of fabricated results.
+- Verification: `tests/test_sourcing.py` **11 passed**; web typecheck and `git diff --check`
+  passed. Signed-in browser verification remains pending a valid local authenticated session.
+
+## Settings — organization rename, done this session
+
+- Admins can now rename their organization in Settings. `PUT /settings` accepts `org_name`,
+  trims and validates it (non-empty, ≤120 characters), persists it without a migration, and
+  records `organization.renamed` in the audit log. Non-admins retain the existing 403 gate.
+- The Settings UI includes an Organization profile card with a save action for admins and a
+  read-only value for other users. The screen now uses responsive Organization, Providers,
+  Outreach, and Team tabs to replace the former long stacked layout.
+- Verification: `tests/test_settings.py` **11 passed**; web typecheck and `git diff --check`
+  passed. Browser verification remains pending a valid local authenticated session.
+
 - **Active feature:** Auth (login + signup), candidate import + timeline UI, dashboard shell,
   **JD-from-PDF upload**, and **real Claude Haiku JD extraction** all done. Next: Phase 4
   (Apollo) or live Hunar, transition-policy auto PASS/REJECT, per-role widgets.
@@ -20,14 +249,11 @@ This file is the resume point for any agent. Keep it current.
   skills/seniority from the latest extracted JD), `POST /jobs/{id}/sourcing/search`, and
   `POST /jobs/{id}/sourcing/add` (add selected external candidates to the pipeline as
   SOURCED, deduped by (source, source_id) within the job, reusing `CandidateService`).
-- **Provider strategy (Apollo 403 handled):** Apollo Search is plan-gated (403 on the Free
-  plan), so a new **offline `sample` provider** (`app/integrations/people_search/sample.py`)
-  returns deterministic, clearly-labelled sample profiles so Flow B is demonstrable without a
-  paid key. `SourcingService.search` uses the configured provider (`PEOPLE_SEARCH_PROVIDER`,
-  default `sample`) and, if a real provider is unreachable/plan-gated/unconfigured, **falls
-  back to sample and flags `is_sample=true` with a plain notice** — never silently. Config:
-  `people_search_provider`, `apollo_api_key` added to `app/config.py`. Registry now knows the
-  `sample` (no-key) provider.
+- **Provider strategy (current):** Sourcing uses only the selected real provider; an
+  unconfigured, plan-gated, or failed real provider returns an honest error and is never
+  replaced with fabricated results. The offline `sample` provider remains available only for
+  explicit test/local-development requests. Auto is PDL-only because PDL is the configured,
+  configured provider, and performs a single transparent zero-result broadening retry.
 - **Frontend:** Sourcing nav item enabled; new `/sourcing` page (`apps/web/app/sourcing/`).
   Role picker (JD-prefilled filters), comma-separated title/location/seniority/skills/keyword
   filters, results with select-all + per-row checkboxes, "Add N to pipeline", sample-data

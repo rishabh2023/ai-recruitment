@@ -109,6 +109,40 @@ class JobService:
         )
         return job
 
+    def archive_job(self, job: Job) -> Job:
+        """Archive (shelve) a role without deleting its workflow or candidate history.
+
+        Allowed from any live state — a draft that will not be pursued or an active role being
+        wound down. Idempotent for an already-archived role. Reversible via activate_job once
+        the JD + workflow gates are met."""
+        if job.status == "archived":
+            return job
+        from_state = job.status
+        job.status = "archived"
+        self._s.flush()
+        write_audit(
+            self._s, org_id=job.org_id, actor_user_id=self._actor,
+            action="job.archived", entity_type="job", entity_id=job.id,
+            from_state=from_state, to_state="archived",
+        )
+        return job
+
+    def delete_job(self, job: Job) -> None:
+        """Permanently delete a role and its cascaded data (JD versions, workflow, candidate
+        participations, calls, sourcing). Only a non-active role can be deleted — an active
+        role must be archived first. The audit row is written before the delete and survives
+        it (audit is a log, not FK-bound to the job). Candidate person records (org-scoped)
+        are not deleted."""
+        if job.status == "active":
+            raise JobActivationError("Archive an active role before deleting it.")
+        write_audit(
+            self._s, org_id=job.org_id, actor_user_id=self._actor,
+            action="job.deleted", entity_type="job", entity_id=job.id,
+            from_state=job.status, meta={"title": job.title},
+        )
+        self._s.delete(job)
+        self._s.flush()
+
     def _has_approved_workflow(self, job: Job) -> bool:
         return bool(
             self._s.scalar(

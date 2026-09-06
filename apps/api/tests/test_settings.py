@@ -40,6 +40,50 @@ def test_settings_read_defaults(client):
     assert any(u["role"] == "admin" for u in body["users"])
 
 
+def test_admin_can_rename_organization(client):
+    _signup_admin(client)
+
+    r = client.put("/settings", json={"org_name": "Northstar Talent"})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["org_name"] == "Northstar Talent"
+    assert client.get("/settings").json()["org_name"] == "Northstar Talent"
+    with engine.connect() as conn:
+        actions = conn.execute(text("SELECT action FROM audit_events ORDER BY created_at")).scalars().all()
+    assert "organization.renamed" in actions
+
+    same_name = client.put("/settings", json={"org_name": "Northstar Talent"})
+    assert same_name.status_code == 200, same_name.text
+    with engine.connect() as conn:
+        rename_count = conn.execute(
+            text("SELECT count(*) FROM audit_events WHERE action = 'organization.renamed'")
+        ).scalar_one()
+        settings_update_count = conn.execute(
+            text("SELECT count(*) FROM audit_events WHERE action = 'settings.updated'")
+        ).scalar_one()
+    assert rename_count == 1
+    assert settings_update_count == 0
+
+
+def test_organization_name_must_not_be_blank(client):
+    _signup_admin(client)
+
+    r = client.put("/settings", json={"org_name": "   "})
+
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "validation_error"
+    assert client.get("/settings").json()["org_name"] == "Acme"
+
+
+def test_organization_name_has_a_length_limit(client):
+    _signup_admin(client)
+
+    r = client.put("/settings", json={"org_name": "x" * 121})
+
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "validation_error"
+
+
 def test_admin_sets_provider_key_and_default(client):
     _signup_admin(client)
     r = client.put("/settings", json={"default_provider": "pdl", "provider_keys": {"pdl": "pdl-test-key"}})
@@ -67,7 +111,7 @@ def test_non_admin_cannot_update(client):
     # dev bootstrap creates a recruiter (non-admin).
     client.post("/dev/bootstrap", json={"org_name": "Bee", "user_email": "rec@bee.test", "password": "pw-123456"})
     client.post("/auth/login", json={"email": "rec@bee.test", "password": "pw-123456"})
-    r = client.put("/settings", json={"live_calls_enabled": True})
+    r = client.put("/settings", json={"org_name": "Unauthorized rename"})
     assert r.status_code == 403, r.text
     assert r.json()["error"]["code"] == "forbidden"
     # ...but reading is allowed.

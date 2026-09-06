@@ -48,6 +48,12 @@ def launch(jc_id: UUID, session: Session = Depends(get_session), principal: Prin
     job = session.get(Job, jc.job_id)
     if job.org_id != principal.org_id:
         raise DomainError("Job candidate not found.", code="not_found", status_code=404)
+    if job.status == "archived":
+        raise DomainError(
+            "This role is inactive. Reactivate it before launching outreach or interviews.",
+            code="conflict",
+            status_code=409,
+        )
     if jc.current_stage_id is None:
         raise DomainError("Candidate has no current stage.", code="conflict", status_code=409)
     stage = session.get(JobWorkflowStage, jc.current_stage_id)

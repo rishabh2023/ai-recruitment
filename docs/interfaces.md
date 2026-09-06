@@ -17,17 +17,47 @@ boundaries, webhooks, and background jobs.
   GET  /auth/invite?token=            POST /auth/accept-invite            POST /dev/bootstrap
   # dashboard
   GET  /dashboard/summary             GET  /dashboard/activity
+  GET  /dashboard/audit               (org audit trail; paginated + search: ?page=&page_size=&q=
+                                       -> {items,total,page,page_size}; q matches action/entity/
+                                       state/reason/actor-email)
+  # assistant (conversational copilot — Claude tool-use over org-scoped ops)
+  POST /assistant/chat                ({messages, approve?} -> {reply, links, pending?})
+    # tools: dashboard_summary, list_jobs, list_candidates, list_funnels, get_job,
+    #        create_job, add_job_description, confirm_job_description, draft_workflow
+    # human-in-the-loop: confirm_job_description + draft_workflow return a `pending` action;
+    #   the client re-POSTs with approve:{tool,args} to run it deterministically.
+    #   approve/activate/delete/launch/decisions are NOT exposed to the model.
   # jobs + workflow
   POST /jobs   GET /jobs   GET /jobs/{id}
   POST /jobs/{id}/versions            POST /jobs/{id}/versions/upload (PDF)
+  POST /jobs/{id}/versions/tidy       (reflow messy JD text -> {text}; deterministic, no LLM)
   POST /jobs/{id}/versions/{vid}/confirm
+  GET  /jobs/{id}/version             (latest JD version: raw jd_text + extracted + confirmed; null when none)
+  GET  /jobs/{id}/funnel              (cumulative-reached hiring funnel: per-stage reached/current + top-line totals)
   POST /jobs/{id}/workflow/draft      GET  /jobs/{id}/workflow
   GET  /jobs/{id}/workflow/versions/{vid}/stages   (list stages)
   PUT  /jobs/{id}/workflow/versions/{vid}/stages   (edit stages + criteria)
   POST /jobs/{id}/workflow/versions/{vid}/approve
-  POST /jobs/{id}/activate            GET/PUT /jobs/{id}/calling-policy
+  POST /jobs/{id}/activate            POST /jobs/{id}/archive    DELETE /jobs/{id}
+  GET/PUT /jobs/{id}/calling-policy
+  # funnels (org-owned reusable workflow templates; writes admin-only)
+  GET  /funnels   POST /funnels   GET /funnels/{id}
+  GET  /funnels/presets              (built-in starter funnels; read-only, code-defined)
+  PUT  /funnels/{id}/stages           (edit → new template version)
+  PATCH /funnels/{id} (rename)        POST /funnels/{id}/archive
+  POST /funnels/{id}/use              ({job_id} → adopt into a job as an unapproved workflow)
   # candidates + pipeline
   POST /jobs/{id}/candidates          GET  /jobs/{id}/candidates
+    # POST rejects a duplicate within the role (same phone or email, 409); phone stored E.164.
+  POST /jobs/{id}/candidates/import-csv  (bulk add; multipart CSV. name + mobile mandatory;
+                                       optional country_code/email/location; per-row errors,
+                                       de-dupes by phone -> {added,skipped,errors[]})
+  GET  /jobs/{id}/pipeline            (paginated + filterable board slice:
+                                       ?stage=<uuid|new|all>&state=&q=&page=&page_size=
+                                       -> {items,total,page,page_size})
+  PATCH /job-candidates/{id}          (edit profile: full_name/phone/email/location; partial)
+  DELETE /job-candidates/{id}
+  GET  /candidates                    (org-wide directory: all participations across jobs)
   GET  /job-candidates/{id}/timeline  POST /job-candidates/{id}/decision
   POST /job-candidates/{id}/launch    POST /job-candidates/{id}/enrich    POST /calls/{id}/sync
   # sourcing (people search & outreach — Flow B)
@@ -48,6 +78,10 @@ boundaries, webhooks, and background jobs.
   before work is enqueued.
 - Write endpoints that trigger external work return quickly after validating and persisting
   intent; the actual work is a background job.
+- `POST /jobs/{id}/archive` makes a role inactive without deleting it. `POST /jobs/{id}/activate`
+  reactivates an archived role only if its JD is confirmed and workflow approved. Inactive roles
+  reject sourcing and new outreach/interview launches with HTTP 409; read-only history remains
+  available.
 
 ### Calling policy
 
@@ -133,8 +167,11 @@ fields as boolean `true` → coerced to absent), and preserve provenance (`sourc
 adapter. Implemented in `apps/api/app/integrations/people_search/`. See ADR-0001.
 
 **Real data only — no fabrication.** `SourcingService` runs the provider the recruiter selects
-(`provider` in the search body) or the org default; there is **no sample fallback**. A provider
-that is unconfigured, plan-gated, or failing raises `SourcingProviderError` → **HTTP 502** with
+(`provider` in the search body), or `provider: "auto"`. Auto is deliberately limited to the
+configured PDL provider: it runs the exact query, then makes one transparent
+zero-result retry without seniority (or without location if seniority is absent). It never
+silently fans out across providers. A provider that is unconfigured, plan-gated, or failing
+raises `SourcingProviderError` → **HTTP 502** with
 the real reason (e.g. "Apollo.io search failed: requires a paid plan (HTTP 403)"). A `sample`
 provider exists only for tests/local dev and is never used automatically. `GET
 /jobs/{id}/sourcing/providers` reports which providers are configured (has a key) + the default.
@@ -181,8 +218,20 @@ never breaks on a transient LLM failure. All outputs require human review/approv
 execute (enforced by `WorkflowService`/`JobService` gates).
 
 JD can be provided two ways: `POST /jobs/{id}/versions` (pasted `jd_text`) or
-`POST /jobs/{id}/versions/upload` (multipart PDF — text extracted server-side via `pypdf`, then
-the same extraction path). Both create an unconfirmed `JobVersion`.
+`POST /jobs/{id}/versions/upload` (multipart PDF). Both create an unconfirmed `JobVersion`.
+
+PDF upload path: text is extracted server-side via `pypdf` and **reflowed** (`tidy_jd_text`) so
+ragged/one-word-per-line extraction becomes readable prose (bullets and headings preserved) —
+this is deterministic, no LLM. If a PDF yields no text (scanned/image-only), it falls back to
+the provider's **native PDF reading** (`read_pdf_text`, Claude vision) bounded by size (2 MB) and
+pages (4); if that also yields nothing the recruiter is asked to paste. `POST /jobs/{id}/versions/tidy`
+exposes the same reflow so a recruiter can clean pasted/edited JD text in place before saving.
+
+**Candidate phone + de-duplication.** Phones are stored E.164 (`+<country><national>`); the add
+UI takes a required country-code selector, CSV accepts a `country_code` column (or a `+`-prefixed
+number). Adding a candidate whose phone or email already exists **within the same role** is
+rejected (409) — de-duplication is per-job (the same person may appear once per role), and the
+match is country-code tolerant (a bare national number matches its E.164 form by suffix).
 
 ## Webhook validation and idempotency
 

@@ -12,15 +12,19 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, get_principal
 from app.api.errors import DomainError
-from app.api.pdf import PdfExtractionError, extract_pdf_text
+from app.api.pdf import PdfExtractionError, extract_pdf_text, pdf_page_count, tidy_jd_text
 from app.api.schemas import (
     CallingPolicyIn,
     CallingPolicyOut,
     CriterionOut,
+    FunnelOut,
+    FunnelStageOut,
     JobCreateIn,
     JobOut,
     JobVersionIn,
     JobVersionOut,
+    TidyTextIn,
+    TidyTextOut,
     JobWorkflowOut,
     StageDetailOut,
     StageOut,
@@ -28,8 +32,9 @@ from app.api.schemas import (
     WorkflowVersionOut,
 )
 from app.db.session import get_session
-from app.integrations.llm import ExtractedJob
+from app.integrations.llm import ExtractedJob, get_llm_provider
 from app.modules.audit.log import write_audit
+from app.modules.candidates.models import JobCandidate
 from app.modules.jobs.models import Job, JobVersion
 from app.modules.jobs.service import JobActivationError, JobService
 from app.modules.workflows.models import (
@@ -80,6 +85,20 @@ def _job_or_404(session: Session, principal: Principal, job_id: UUID) -> Job:
     return job
 
 
+def _effective_workflow_version(session: Session, job_id: UUID) -> JobWorkflowVersion | None:
+    """The workflow version a candidate pipeline runs against: the approved version if
+    any, else the latest draft. Returns None when no workflow has been drafted yet."""
+    wf = session.scalars(select(JobWorkflow).where(JobWorkflow.job_id == job_id)).first()
+    if wf is None:
+        return None
+    return session.scalars(
+        select(JobWorkflowVersion)
+        .where(JobWorkflowVersion.job_workflow_id == wf.id)
+        .order_by(JobWorkflowVersion.approved.desc(), JobWorkflowVersion.version.desc())
+        .limit(1)
+    ).first()
+
+
 @router.post("", response_model=JobOut, status_code=201)
 def create_job(body: JobCreateIn, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
     return JobService(session, principal.user_id).create_job(principal.org_id, body.title)
@@ -104,18 +123,75 @@ def get_job_workflow(job_id: UUID, session: Session = Depends(get_session), prin
     """The job's effective workflow: the approved version if any, else the latest draft, with
     full stage detail (purpose, execution type, information to collect, approval, criteria)."""
     _job_or_404(session, principal, job_id)
-    wf = session.scalars(select(JobWorkflow).where(JobWorkflow.job_id == job_id)).first()
-    if wf is None:
-        raise DomainError("No workflow drafted for this job yet.", code="not_found", status_code=404)
-    version = session.scalars(
-        select(JobWorkflowVersion)
-        .where(JobWorkflowVersion.job_workflow_id == wf.id)
-        .order_by(JobWorkflowVersion.approved.desc(), JobWorkflowVersion.version.desc())
-        .limit(1)
-    ).first()
+    version = _effective_workflow_version(session, job_id)
     if version is None:
-        raise DomainError("No workflow version yet.", code="not_found", status_code=404)
+        raise DomainError("No workflow drafted for this job yet.", code="not_found", status_code=404)
     return _workflow_out(session, version)
+
+
+@router.get("/{job_id}/version", response_model=JobVersionOut | None)
+def get_latest_job_version(job_id: UUID, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
+    """The most recent JD version (raw text + extracted details + confirmed flag), or null
+    when no JD has been added yet. Powers the read/edit JD card on the job workspace."""
+    job = _job_or_404(session, principal, job_id)
+    return JobService(session, principal.user_id).latest_job_version(job)
+
+
+@router.get("/{job_id}/funnel", response_model=FunnelOut)
+def get_job_funnel(job_id: UUID, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
+    """Cumulative-reached hiring funnel for the job's effective workflow: per stage, how
+    many candidates reached that stage or beyond, how many sit there now, plus top-line
+    totals and completion %. Computed server-side from persisted pipeline state."""
+    _job_or_404(session, principal, job_id)
+    version = _effective_workflow_version(session, job_id)
+    stages = (
+        session.scalars(
+            select(JobWorkflowStage)
+            .where(JobWorkflowStage.job_workflow_version_id == version.id)
+            .order_by(JobWorkflowStage.stage_order.asc())
+        ).all()
+        if version is not None
+        else []
+    )
+    order_by_stage_id = {s.id: s.stage_order for s in stages}
+    max_order = max((s.stage_order for s in stages), default=0)
+
+    candidates = session.scalars(select(JobCandidate).where(JobCandidate.job_id == job_id)).all()
+    total = len(candidates)
+    rejected = sum(1 for c in candidates if c.pipeline_state == "REJECTED")
+    completed = sum(1 for c in candidates if c.pipeline_state == "COMPLETED")
+    in_progress = total - rejected - completed
+
+    def furthest_order(c: JobCandidate) -> int:
+        # A COMPLETED candidate cleared the whole workflow (past the last stage).
+        if c.pipeline_state == "COMPLETED":
+            return max_order
+        # Otherwise the stage they currently occupy is the furthest they reached.
+        # Candidates with no stage (e.g. sourced, not yet in the pipeline) or a stage from
+        # a superseded version sit at the top of the funnel only.
+        return order_by_stage_id.get(c.current_stage_id, 0)
+
+    furthest = [furthest_order(c) for c in candidates]
+    stage_out = []
+    for s in stages:
+        reached = sum(1 for f in furthest if f >= s.stage_order)
+        current = sum(
+            1
+            for c in candidates
+            if c.current_stage_id == s.id and c.pipeline_state not in ("REJECTED", "COMPLETED")
+        )
+        stage_out.append(
+            FunnelStageOut(
+                stage_id=s.id, stage_order=s.stage_order, name=s.name,
+                execution_type=s.execution_type, reached=reached, current=current,
+                reached_pct=round(reached / total * 100, 1) if total else 0.0,
+            )
+        )
+    return FunnelOut(
+        total=total, in_progress=in_progress, rejected=rejected, completed=completed,
+        completion_pct=round(completed / total * 100, 1) if total else 0.0,
+        stages=stage_out,
+    )
 
 
 @router.put("/{job_id}/workflow/versions/{version_id}/stages", response_model=JobWorkflowOut)
@@ -234,7 +310,20 @@ def add_job_version(job_id: UUID, body: JobVersionIn, session: Session = Depends
     return JobService(session, principal.user_id).add_job_version(job, body.jd_text)
 
 
+@router.post("/{job_id}/versions/tidy", response_model=TidyTextOut)
+def tidy_job_description(job_id: UUID, body: TidyTextIn, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
+    """Reflow messy JD text (e.g. one-word-per-line from a PDF copy-paste) into clean prose
+    in place — same deterministic normalizer the PDF upload path uses, no LLM. Lets the
+    recruiter fix formatting from the editor without leaving the app or saving a version."""
+    _job_or_404(session, principal, job_id)
+    return TidyTextOut(text=tidy_jd_text(body.text))
+
+
 MAX_PDF_BYTES = 10 * 1024 * 1024  # 10 MB
+# Bounds for sending a PDF to the LLM's native reader (vision is token-expensive): a JD is a
+# page or three, so cap the AI-read fallback well below the API's own limits.
+LLM_PDF_MAX_BYTES = 2 * 1024 * 1024  # 2 MB
+LLM_PDF_MAX_PAGES = 4
 
 
 @router.post("/{job_id}/versions/upload", response_model=JobVersionOut, status_code=201)
@@ -244,9 +333,10 @@ async def add_job_version_from_pdf(
     session: Session = Depends(get_session),
     principal: Principal = Depends(get_principal),
 ):
-    """Create a JD version from an uploaded PDF: extract its text, then run the same
-    extraction path as pasting. Scanned/image-only PDFs (no extractable text) are rejected
-    with a clear message so the recruiter can paste instead."""
+    """Create a JD version from an uploaded PDF. Primary path: extract text with pypdf (free,
+    instant) and run the same extraction as pasting. If a PDF yields no text (scanned/image
+    only), fall back to the LLM's native PDF reading — but only within tight size/page bounds,
+    since PDF vision is token-expensive. If that also yields nothing, ask the recruiter to paste."""
     job = _job_or_404(session, principal, job_id)
     is_pdf = file.content_type == "application/pdf" or (file.filename or "").lower().endswith(".pdf")
     if not is_pdf:
@@ -260,13 +350,31 @@ async def add_job_version_from_pdf(
         text = extract_pdf_text(data)
     except PdfExtractionError:
         raise DomainError("Could not read this PDF. Please upload a valid PDF or paste the JD.", code="validation_error", status_code=422)
+
+    if not text:
+        # Scanned/image-only PDF: try Claude's native PDF reading, bounded by size + pages.
+        text = _read_pdf_with_llm(data)
     if not text:
         raise DomainError(
-            "No text could be extracted (the PDF may be scanned images). Please paste the JD instead.",
+            "No text could be read from this PDF (it may be a scan larger than the 4-page / 2 MB limit "
+            "for AI reading). Please paste the JD text instead.",
             code="validation_error",
             status_code=422,
         )
     return JobService(session, principal.user_id).add_job_version(job, text)
+
+
+def _read_pdf_with_llm(data: bytes) -> str:
+    """LLM PDF-vision fallback for scanned PDFs, gated on size + page count. Returns "" when the
+    file is over the bounds, the page count can't be read, or the provider has no vision."""
+    if len(data) > LLM_PDF_MAX_BYTES:
+        return ""
+    try:
+        if pdf_page_count(data) > LLM_PDF_MAX_PAGES:
+            return ""
+    except PdfExtractionError:
+        return ""
+    return get_llm_provider().read_pdf_text(data).strip()
 
 
 @router.post("/{job_id}/versions/{version_id}/confirm", response_model=JobVersionOut)
@@ -316,3 +424,25 @@ def activate_job(job_id: UUID, session: Session = Depends(get_session), principa
         return JobService(session, principal.user_id).activate_job(job)
     except JobActivationError as exc:
         raise DomainError(str(exc), code="conflict", status_code=409)
+
+
+@router.post("/{job_id}/archive", response_model=JobOut)
+def archive_job(job_id: UUID, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
+    """Mark a role inactive while retaining its workflow and candidate history."""
+    job = _job_or_404(session, principal, job_id)
+    try:
+        return JobService(session, principal.user_id).archive_job(job)
+    except JobActivationError as exc:
+        raise DomainError(str(exc), code="conflict", status_code=409)
+
+
+@router.delete("/{job_id}", status_code=204)
+def delete_job(job_id: UUID, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
+    """Permanently delete a non-active role and its cascaded data. An active role must be
+    archived first (409)."""
+    job = _job_or_404(session, principal, job_id)
+    try:
+        JobService(session, principal.user_id).delete_job(job)
+    except JobActivationError as exc:
+        raise DomainError(str(exc), code="conflict", status_code=409)
+    return None

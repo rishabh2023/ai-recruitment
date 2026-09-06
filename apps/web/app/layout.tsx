@@ -12,7 +12,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body>
+      {/* Browser extensions (e.g. ColorZilla's cz-shortcut-listen) mutate <body> before React
+          hydrates; suppress the resulting attribute-mismatch warning on this element only. */}
+      <body suppressHydrationWarning>
         <AuthProvider>
           <AppShell>{children}</AppShell>
         </AuthProvider>

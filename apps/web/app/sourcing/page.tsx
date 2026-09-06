@@ -84,14 +84,18 @@ function SourcingInner() {
       .then((p) => {
         setProviders(p);
         const firstConfigured = p.providers.find((x) => x.configured)?.key;
-        setProvider(p.default ?? firstConfigured ?? p.providers[0]?.key ?? "");
+        const pdlConfigured = p.providers.some((x) => x.key === "pdl" && x.configured);
+        setProvider(pdlConfigured ? "auto" : p.default ?? firstConfigured ?? p.providers[0]?.key ?? "");
       })
       .catch(() => {});
   }, [jobId, applyQuery]);
 
   const selectedList = useMemo(() => Object.values(selected), [selected]);
   const activeJob = jobs.find((j) => j.id === jobId) || null;
-  const providerConfigured = !!providers?.providers.find((p) => p.key === provider)?.configured;
+  const autoAvailable = !!providers?.providers.find((p) => p.key === "pdl")?.configured;
+  const providerConfigured = provider === "auto"
+    ? autoAvailable
+    : !!providers?.providers.find((p) => p.key === provider)?.configured;
   const anyConfigured = !!providers?.providers.some((p) => p.configured);
 
   async function runSearch(page = 1) {
@@ -207,8 +211,9 @@ function SourcingInner() {
               <section className="sourcing-form" aria-label="Search filters">
                 <div className="sourcing-provider-row">
                   <label className="sourcing-field" style={{ maxWidth: 260 }}>
-                    <span className="field-label">People-search provider</span>
+                    <span className="field-label">Search mode</span>
                     <select value={provider} onChange={(e) => setProvider(e.target.value)}>
+                      <option value="auto" disabled={!autoAvailable}>Auto (recommended) — People Data Labs</option>
                       {(providers?.providers ?? []).map((p) => (
                         <option key={p.key} value={p.key} disabled={!p.configured}>
                           {p.label}{p.configured ? "" : " — not configured"}
@@ -219,6 +224,11 @@ function SourcingInner() {
                   {!anyConfigured && (
                     <p className="field-hint" style={{ float: "none" }}>
                       No provider has an API key yet. Add one in <Link href="/settings">Settings</Link> to search real candidates.
+                    </p>
+                  )}
+                  {autoAvailable && (
+                    <p className="field-hint sourcing-auto-hint">
+                      Auto starts with an exact PDL search, then broadens one restrictive filter only when needed.
                     </p>
                   )}
                 </div>
@@ -241,9 +251,9 @@ function SourcingInner() {
 
               {result && (
                 <section className="sourcing-results" aria-label="Search results">
-                  {result.is_sample && (
-                    <div className="sourcing-notice" role="note">
-                      <strong>Sample data.</strong> {result.notice}
+                  {result.notice && (
+                    <div className={result.is_sample ? "sourcing-notice" : "sourcing-auto-notice"} role="note">
+                      {result.is_sample && <strong>Sample data.</strong>} {result.notice}
                     </div>
                   )}
 
@@ -251,7 +261,7 @@ function SourcingInner() {
                     <div>
                       <strong>{result.candidates.length}</strong> shown
                       {typeof result.total === "number" ? ` of ${result.total}` : ""} ·{" "}
-                      <span className="muted">provider: {result.provider}</span>
+                      <span className="muted">provider: {result.requested_provider === "auto" ? `Auto · ${result.provider}` : result.provider}</span>
                     </div>
                     {result.candidates.length > 0 && (
                       <div className="sourcing-results-actions">

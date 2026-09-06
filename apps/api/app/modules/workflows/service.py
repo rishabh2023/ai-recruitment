@@ -24,6 +24,7 @@ from .models import (
     JobWorkflowVersion,
     StageCriteria,
     WorkflowStageTemplate,
+    WorkflowTemplate,
     WorkflowTemplateVersion,
 )
 
@@ -113,14 +114,25 @@ class WorkflowService:
             .order_by(WorkflowStageTemplate.stage_order.asc())
         ).all()
         for st in templates:
-            self._s.add(
-                JobWorkflowStage(
-                    job_workflow_version_id=version.id,
-                    stage_order=st.stage_order,
-                    name=st.name,
-                    execution_type=st.execution_type,
-                )
+            cfg = st.config or {}
+            stage = JobWorkflowStage(
+                job_workflow_version_id=version.id,
+                stage_order=st.stage_order,
+                name=st.name,
+                purpose=cfg.get("purpose"),
+                execution_type=st.execution_type,
+                information_requirements=list(cfg.get("information_requirements") or []),
+                requires_human_approval=bool(cfg.get("requires_human_approval", False)),
             )
+            self._s.add(stage)
+            self._s.flush()
+            for c in cfg.get("criteria") or []:
+                self._s.add(
+                    StageCriteria(
+                        job_workflow_stage_id=stage.id,
+                        name=c["name"], kind=c.get("kind", "numeric"), weight=c.get("weight"),
+                    )
+                )
         self._s.flush()
         write_audit(
             self._s, org_id=job.org_id, actor_user_id=self._actor,
@@ -188,3 +200,146 @@ class WorkflowService:
     def _job_id_for_version(self, version: JobWorkflowVersion) -> UUID:
         jw = self._s.get(JobWorkflow, version.job_workflow_id)
         return jw.job_id
+
+
+class WorkflowTemplateNotFound(Exception):
+    """Raised when a funnel (workflow template) does not exist for the org."""
+
+
+def _stage_config(sd: dict) -> dict:
+    """Rich stage fields (beyond name + execution_type) live in the stage template's JSONB
+    config, so no per-column migration is needed as the stage shape evolves."""
+    return {
+        "purpose": sd.get("purpose"),
+        "information_requirements": list(sd.get("information_requirements") or []),
+        "requires_human_approval": bool(sd.get("requires_human_approval", False)),
+        "criteria": [
+            {"name": c["name"], "kind": c.get("kind", "numeric"), "weight": c.get("weight")}
+            for c in (sd.get("criteria") or [])
+            if str(c.get("name", "")).strip()
+        ],
+    }
+
+
+class WorkflowTemplateService:
+    """Org-owned reusable hiring funnels (workflow templates). Editing stages always creates a
+    NEW template version so a job that already adopted an earlier version stays stable. Does
+    not commit; the caller owns the transaction."""
+
+    def __init__(self, session: Session, actor_user_id: UUID | None = None) -> None:
+        self._s = session
+        self._actor = actor_user_id
+
+    def _template_or_none(self, org_id: UUID, template_id: UUID) -> WorkflowTemplate | None:
+        t = self._s.get(WorkflowTemplate, template_id)
+        return t if t is not None and t.org_id == org_id else None
+
+    def _template_or_raise(self, org_id: UUID, template_id: UUID) -> WorkflowTemplate:
+        t = self._template_or_none(org_id, template_id)
+        if t is None:
+            raise WorkflowTemplateNotFound("Funnel not found.")
+        return t
+
+    def latest_version(self, template_id: UUID) -> WorkflowTemplateVersion | None:
+        return self._s.scalars(
+            select(WorkflowTemplateVersion)
+            .where(WorkflowTemplateVersion.template_id == template_id)
+            .order_by(WorkflowTemplateVersion.version.desc())
+            .limit(1)
+        ).first()
+
+    def stages_for_version(self, version_id: UUID) -> list[WorkflowStageTemplate]:
+        return list(
+            self._s.scalars(
+                select(WorkflowStageTemplate)
+                .where(WorkflowStageTemplate.template_version_id == version_id)
+                .order_by(WorkflowStageTemplate.stage_order.asc())
+            )
+        )
+
+    def list_templates(self, org_id: UUID, include_archived: bool = False):
+        """Return [(template, latest_version, stage_count)] newest-first."""
+        q = select(WorkflowTemplate).where(WorkflowTemplate.org_id == org_id)
+        if not include_archived:
+            q = q.where(WorkflowTemplate.archived_at.is_(None))
+        templates = list(self._s.scalars(q.order_by(WorkflowTemplate.created_at.desc())))
+        out = []
+        for t in templates:
+            v = self.latest_version(t.id)
+            count = (
+                self._s.scalar(
+                    select(func.count())
+                    .select_from(WorkflowStageTemplate)
+                    .where(WorkflowStageTemplate.template_version_id == v.id)
+                )
+                if v is not None
+                else 0
+            )
+            out.append((t, v, count))
+        return out
+
+    def _write_stages(self, version_id: UUID, stages: list[dict]) -> None:
+        for i, sd in enumerate(stages, start=1):
+            self._s.add(
+                WorkflowStageTemplate(
+                    template_version_id=version_id,
+                    stage_order=i,
+                    name=sd["name"],
+                    execution_type=sd["execution_type"],
+                    config=_stage_config(sd),
+                )
+            )
+        self._s.flush()
+
+    def create_template(self, org_id: UUID, name: str, stages: list[dict]) -> WorkflowTemplate:
+        template = WorkflowTemplate(org_id=org_id, name=name)
+        self._s.add(template)
+        self._s.flush()
+        version = WorkflowTemplateVersion(template_id=template.id, version=1)
+        self._s.add(version)
+        self._s.flush()
+        self._write_stages(version.id, stages)
+        write_audit(
+            self._s, org_id=org_id, actor_user_id=self._actor,
+            action="funnel.created", entity_type="workflow_template", entity_id=template.id,
+            meta={"name": name, "stage_count": len(stages)},
+        )
+        return template
+
+    def edit_stages(self, org_id: UUID, template_id: UUID, stages: list[dict]) -> WorkflowTemplateVersion:
+        """Create a NEW version with the given stages (older versions are never mutated)."""
+        self._template_or_raise(org_id, template_id)
+        current = self.latest_version(template_id)
+        next_version = (current.version + 1) if current is not None else 1
+        version = WorkflowTemplateVersion(template_id=template_id, version=next_version)
+        self._s.add(version)
+        self._s.flush()
+        self._write_stages(version.id, stages)
+        write_audit(
+            self._s, org_id=org_id, actor_user_id=self._actor,
+            action="funnel.stages_edited", entity_type="workflow_template", entity_id=template_id,
+            meta={"version": next_version, "stage_count": len(stages)},
+        )
+        return version
+
+    def rename(self, org_id: UUID, template_id: UUID, name: str) -> WorkflowTemplate:
+        t = self._template_or_raise(org_id, template_id)
+        t.name = name
+        self._s.flush()
+        write_audit(
+            self._s, org_id=org_id, actor_user_id=self._actor,
+            action="funnel.renamed", entity_type="workflow_template", entity_id=t.id,
+            meta={"name": name},
+        )
+        return t
+
+    def archive(self, org_id: UUID, template_id: UUID) -> WorkflowTemplate:
+        t = self._template_or_raise(org_id, template_id)
+        if t.archived_at is None:
+            t.archived_at = datetime.now(timezone.utc)
+            self._s.flush()
+            write_audit(
+                self._s, org_id=org_id, actor_user_id=self._actor,
+                action="funnel.archived", entity_type="workflow_template", entity_id=t.id,
+            )
+        return t

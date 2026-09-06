@@ -19,7 +19,7 @@ from app.config import settings as app_settings
 from app.integrations.people_search.registry import KNOWN_PROVIDERS
 from app.modules.audit.log import write_audit
 
-from .models import OrgSettings, User
+from .models import Organization, OrgSettings, User
 
 # Env var name -> settings attribute for the process-level (.env) provider keys.
 _ENV_KEY_ATTR = {
@@ -74,6 +74,30 @@ class SettingsService:
         return bool((row and row.hunar_live_calls_enabled) or app_settings.hunar_live_calls_enabled)
 
     # --- mutations (admin) ------------------------------------------------------
+    def rename_organization(self, org_id: UUID, org_name: str) -> Organization:
+        """Rename an organization after validating its recruiter-facing display name."""
+        name = org_name.strip()
+        if not name:
+            raise ValueError("Organization name cannot be empty.")
+        if len(name) > 120:
+            raise ValueError("Organization name must be 120 characters or fewer.")
+
+        org = self._s.get(Organization, org_id)
+        if org is None:
+            raise ValueError("Organization was not found.")
+        if org.name == name:
+            return org
+
+        previous_name = org.name
+        org.name = name
+        self._s.flush()
+        write_audit(
+            self._s, org_id=org_id, actor_user_id=self._actor,
+            action="organization.renamed", entity_type="organization", entity_id=org.id,
+            meta={"previous_name": previous_name, "new_name": name},
+        )
+        return org
+
     def update(
         self,
         org_id: UUID,

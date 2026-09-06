@@ -60,6 +60,10 @@ class HunarDispatchService:
         run = self._s.get(CandidateStageRun, call.candidate_stage_run_id)
         stage = self._s.get(JobWorkflowStage, run.job_workflow_stage_id) if run else None
 
+        if job.status == "archived":
+            self._cancel_inactive_job(call, run, org.id)
+            raise HunarDispatchError("Role is inactive; queued call was cancelled before dispatch.")
+
         agent_id = self._resolve_agent_id(stage)
         if not agent_id:
             self._fail(call, run, org.id, reason="No Hunar agent configured for this stage.")
@@ -195,5 +199,19 @@ class HunarDispatchService:
             self._s, org_id=org_id, actor_user_id=self._actor,
             action="interview.dispatch_failed", entity_type="call", entity_id=call.id,
             reason=reason, meta=meta or {},
+        )
+        self._s.flush()
+
+    def _cancel_inactive_job(self, call: Call, run, org_id) -> None:
+        """Stop a queued call if its role was made inactive before the worker dispatched it."""
+        reason = "Role was marked inactive before this queued call could be dispatched."
+        call.normalized_status = "CANCELLED"
+        self._update_latest_attempt(call, "CANCELLED")
+        if run is not None and run.status == "AWAITING_RESULT":
+            WorkflowExecutionService(self._s, self._actor).cancel(run, reason=reason)
+        write_audit(
+            self._s, org_id=org_id, actor_user_id=self._actor,
+            action="interview.dispatch_cancelled_inactive_job", entity_type="call", entity_id=call.id,
+            reason=reason,
         )
         self._s.flush()

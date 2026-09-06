@@ -55,6 +55,20 @@ Organization
 
 ## State machines
 
+### Job lifecycle
+
+```
+draft → active → archived
+              ↘ active (reactivate, subject to the normal activation gates)
+```
+
+- The UI calls `archived` **Inactive**. It is a reversible state, never deletion: the job,
+  approved workflow, candidate pipeline, calls, and audit history remain accessible.
+- Archiving an active role prevents new sourcing and new outreach/interview launches. Existing
+  history remains readable.
+- Reactivation uses the same confirmed-JD and approved-workflow gates as first activation.
+- Both transitions are audited (`job.archived`, `job.activated`).
+
 ### Candidate Stage Run lifecycle
 
 ```

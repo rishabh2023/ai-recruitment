@@ -17,21 +17,35 @@ Recruiter-facing UX principles and the states every meaningful flow must support
   before it executes. The AI output is a draft, never authoritative.
 - Consequential external actions (bulk outreach/interview) go through an explicit
   **pre-launch review** screen, not an immediate fire.
-- The pipeline board is a **view over persisted state**. Dragging a card is never the source
-  of truth.
+- The pipeline is a **view over persisted state** (a server-paginated, filterable table — and
+  a board where a board reads better). Position reflects persisted funnel state; it is never
+  set by drag-and-drop.
+- **Recruiter-facing naming:** the per-job stage definition is labeled **"Funnel"** in the UI
+  (the reusable org template is a **Funnel** too; a job adopts its own copy). Internally these
+  remain `workflow`/`JobWorkflow`; only the recruiter-facing copy says "funnel".
 - Manual overrides (start at later stage, move despite incomplete stage, skip) always **show
   the consequence** before confirmation and are audited.
 
 ## Key flows and their surfaces
 
-- **Jobs** — create, upload/enter JD, confirm extracted details, resolve/draft workflow,
-  review/customize stages and criteria, activate.
-- **Workflows** — organization template library; per-job snapshot; AI-drafted workflow for
+- **Jobs** — create, upload/enter JD, confirm extracted details, draft the funnel,
+  review/customize stages and criteria, activate, then mark inactive/reactivate without losing
+  the role's history. The Jobs screen distinguishes Active, Draft, and Inactive roles. The job
+  workspace is tabbed (Overview / Funnel / Pipeline / Calling policy); an existing job **drafts
+  its funnel in place** (never re-entering the create wizard). Uploaded PDF JDs are auto-cleaned,
+  and a **Clean up formatting** action reflows messy pasted text. Stage cards show their
+  **success criteria**, not just a count.
+- **Funnels** — organization template library; a job adopts its own copy; AI-drafted funnel for
   bootstrap when no template matches.
 - **Stages** — configure purpose, execution type (AI/Human/System), information to collect,
   criteria, transition policy, approval requirement, calling/language for voice stages.
-- **Candidates** — import existing or find via Apollo; progressive profile with a
-  completeness indicator (Known / Missing / Source); choose starting stage where justified.
+- **Candidates & Pipeline** — two entry paths, both landing in the same pipeline: **add one in
+  place** (a modal with a required country-code selector, so phones are stored dial-ready E.164)
+  or **bulk-import a CSV** (name + mobile mandatory; optional country_code/email/location;
+  per-row error reporting). Sourced candidates arrive the same way. The pipeline is a paginated,
+  searchable table filterable by stage; each row has an **Edit** action. Re-adding the same
+  phone/email **to the same role is blocked** (per-role de-duplication). Find via Apollo/PDL;
+  progressive profile with a completeness indicator (Known / Missing / Source).
 - **Evidence** — structured result, criteria-level scores, supporting evidence, and only
   the transcript/summary/recording fields Hunar actually returns.
 - **Calling policy** — allowed days, window, timezone behavior, attempt limits, retry

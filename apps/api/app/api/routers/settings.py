@@ -109,16 +109,23 @@ def revoke_invite(invite_id: UUID, session: Session = Depends(get_session), prin
 @router.put("", response_model=SettingsOut)
 def update_settings(body: SettingsUpdateIn, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
     _require_admin(principal)
+    svc = SettingsService(session, principal.user_id)
+    if body.org_name is not None:
+        try:
+            svc.rename_organization(principal.org_id, body.org_name)
+        except ValueError as exc:
+            raise DomainError(str(exc), code="validation_error", status_code=422)
     if body.default_provider is not None and body.default_provider not in KNOWN_PROVIDERS:
         raise DomainError("Unknown people-search provider.", code="validation_error", status_code=422)
     if body.provider_keys:
         for k in body.provider_keys:
             if k not in KNOWN_PROVIDERS:
                 raise DomainError(f"Unknown provider '{k}'.", code="validation_error", status_code=422)
-    SettingsService(session, principal.user_id).update(
-        principal.org_id,
-        default_provider=body.default_provider,
-        live_calls_enabled=body.live_calls_enabled,
-        provider_keys=body.provider_keys,
-    )
+    if any(value is not None for value in (body.default_provider, body.live_calls_enabled, body.provider_keys)):
+        svc.update(
+            principal.org_id,
+            default_provider=body.default_provider,
+            live_calls_enabled=body.live_calls_enabled,
+            provider_keys=body.provider_keys,
+        )
     return _view(session, principal)

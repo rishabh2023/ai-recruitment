@@ -27,6 +27,19 @@ export type ActivityItem = {
   reason: string | null;
   created_at: string;
 };
+export type AssistantReply = { reply: string; links: Array<{ label: string; href: string }>; pending?: { tool: string; label: string; args: Record<string, unknown> } | null };
+export type AuditLogItem = {
+  id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  from_state: string | null;
+  to_state: string | null;
+  reason: string | null;
+  actor_email: string | null;
+  created_at: string;
+};
+export type AuditPageResult = { items: AuditLogItem[]; total: number; page: number; page_size: number };
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
@@ -67,6 +80,15 @@ export const api = {
   // dashboard
   dashboardSummary: () => req<DashboardSummary>("/dashboard/summary"),
   dashboardActivity: () => req<ActivityItem[]>("/dashboard/activity"),
+  auditLog: (opts: { page?: number; page_size?: number; q?: string } = {}) => {
+    const p = new URLSearchParams();
+    p.set("page", String(opts.page ?? 1));
+    p.set("page_size", String(opts.page_size ?? 50));
+    if (opts.q) p.set("q", opts.q);
+    return req<AuditPageResult>(`/dashboard/audit?${p.toString()}`);
+  },
+  assistantChat: (messages: Array<{ role: string; content: string }>, approve?: { tool: string; args: Record<string, unknown> }) =>
+    req<AssistantReply>("/assistant/chat", { method: "POST", body: JSON.stringify({ messages, approve }) }),
 
   // jobs
   listJobs: () => req<Job[]>("/jobs"),
@@ -75,6 +97,8 @@ export const api = {
     req<Job>("/jobs", { method: "POST", body: JSON.stringify({ title }) }),
   addVersion: (jobId: string, jd_text: string) =>
     req<JobVersion>(`/jobs/${jobId}/versions`, { method: "POST", body: JSON.stringify({ jd_text }) }),
+  tidyJobDescription: (jobId: string, text: string) =>
+    req<{ text: string }>(`/jobs/${jobId}/versions/tidy`, { method: "POST", body: JSON.stringify({ text }) }),
   addVersionFromPdf: async (jobId: string, file: File): Promise<JobVersion> => {
     // multipart: let the browser set the Content-Type (with boundary), so don't use req().
     const form = new FormData();
@@ -97,6 +121,8 @@ export const api = {
   listStages: (jobId: string, vid: string) =>
     req<Stage[]>(`/jobs/${jobId}/workflow/versions/${vid}/stages`),
   getJobWorkflow: (jobId: string) => req<JobWorkflow>(`/jobs/${jobId}/workflow`),
+  getLatestVersion: (jobId: string) => req<JobVersion | null>(`/jobs/${jobId}/version`),
+  getJobFunnel: (jobId: string) => req<Funnel>(`/jobs/${jobId}/funnel`),
   getCallingPolicy: (jobId: string) => req<CallingPolicy | null>(`/jobs/${jobId}/calling-policy`),
   setCallingPolicy: (jobId: string, policy: CallingPolicyInput) =>
     req<CallingPolicy>(`/jobs/${jobId}/calling-policy`, { method: "PUT", body: JSON.stringify(policy) }),
@@ -108,11 +134,51 @@ export const api = {
   approveWorkflow: (jobId: string, vid: string) =>
     req<WorkflowVersion>(`/jobs/${jobId}/workflow/versions/${vid}/approve`, { method: "POST" }),
   activateJob: (jobId: string) => req<Job>(`/jobs/${jobId}/activate`, { method: "POST" }),
+  archiveJob: (jobId: string) => req<Job>(`/jobs/${jobId}/archive`, { method: "POST" }),
+  deleteJob: (jobId: string) => req<null>(`/jobs/${jobId}`, { method: "DELETE" }),
+
+  // funnels (org-owned reusable workflow templates)
+  listFunnels: (includeArchived = false) =>
+    req<FunnelSummary[]>(`/funnels${includeArchived ? "?include_archived=true" : ""}`),
+  listFunnelPresets: () => req<FunnelPreset[]>("/funnels/presets"),
+  createFunnel: (name: string, stages: StageEdit[]) =>
+    req<FunnelDetail>("/funnels", { method: "POST", body: JSON.stringify({ name, stages }) }),
+  getFunnel: (id: string) => req<FunnelDetail>(`/funnels/${id}`),
+  editFunnelStages: (id: string, stages: StageEdit[]) =>
+    req<FunnelDetail>(`/funnels/${id}/stages`, { method: "PUT", body: JSON.stringify({ stages }) }),
+  renameFunnel: (id: string, name: string) =>
+    req<FunnelDetail>(`/funnels/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  archiveFunnel: (id: string) =>
+    req<FunnelSummary>(`/funnels/${id}/archive`, { method: "POST" }),
+  useFunnel: (id: string, jobId: string) =>
+    req<WorkflowVersion>(`/funnels/${id}/use`, { method: "POST", body: JSON.stringify({ job_id: jobId }) }),
 
   // candidates
   listCandidates: (jobId: string) => req<JobCandidateListItem[]>(`/jobs/${jobId}/candidates`),
+  pipelinePage: (jobId: string, opts: { stage?: string; state?: string; q?: string; page?: number; page_size?: number } = {}) => {
+    const p = new URLSearchParams();
+    if (opts.stage) p.set("stage", opts.stage);
+    if (opts.state) p.set("state", opts.state);
+    if (opts.q) p.set("q", opts.q);
+    p.set("page", String(opts.page ?? 1));
+    p.set("page_size", String(opts.page_size ?? 25));
+    return req<PipelinePage>(`/jobs/${jobId}/pipeline?${p.toString()}`);
+  },
+  listAllCandidates: () => req<OrgCandidateListItem[]>("/candidates"),
+  deleteJobCandidate: (jcId: string) => req<null>(`/job-candidates/${jcId}`, { method: "DELETE" }),
   importCandidate: (jobId: string, body: CandidateImport) =>
     req<JobCandidateOut>(`/jobs/${jobId}/candidates`, { method: "POST", body: JSON.stringify(body) }),
+  updateCandidate: (jcId: string, body: { full_name?: string; phone?: string | null; email?: string | null; location?: string | null }) =>
+    req<CandidateSummary>(`/job-candidates/${jcId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  importCandidatesCsv: async (jobId: string, file: File): Promise<CsvImportResult> => {
+    // multipart: let the browser set Content-Type (with boundary), so don't use req().
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${BASE}/jobs/${jobId}/candidates/import-csv`, { method: "POST", credentials: "include", body: form });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.error?.message ?? `Upload failed (${res.status})`);
+    return data as CsvImportResult;
+  },
   timeline: (jcId: string) => req<Timeline>(`/job-candidates/${jcId}/timeline`),
   // Returns Hunar internals in hunar_payload; the UI intentionally ignores that (recruiters
   // see product concepts only, never telephony/agent internals).
@@ -165,7 +231,24 @@ export const api = {
 };
 
 export type Job = { id: string; title: string; status: string; created_at: string };
-export type JobVersion = { id: string; version: number; confirmed: boolean; extracted: Record<string, unknown> };
+export type JobVersion = { id: string; version: number; confirmed: boolean; jd_text: string; extracted: Record<string, unknown> };
+export type FunnelStage = {
+  stage_id: string;
+  stage_order: number;
+  name: string;
+  execution_type: string;
+  reached: number;
+  current: number;
+  reached_pct: number;
+};
+export type Funnel = {
+  total: number;
+  in_progress: number;
+  rejected: number;
+  completed: number;
+  completion_pct: number;
+  stages: FunnelStage[];
+};
 export type WorkflowVersion = { id: string; version: number; approved: boolean };
 export type Stage = { id: string; stage_order: number; name: string; execution_type: string };
 export type Criterion = { name: string; kind: string; weight: number | null };
@@ -195,6 +278,19 @@ export type CallingPolicyInput = {
   language: string | null;
 };
 export type CallingPolicy = CallingPolicyInput & { id: string };
+export type FunnelSummary = { id: string; name: string; version: number; stage_count: number; archived: boolean; created_at: string };
+export type FunnelStageSpec = {
+  stage_order: number;
+  name: string;
+  purpose: string | null;
+  execution_type: string;
+  information_requirements: string[];
+  requires_human_approval: boolean;
+  criteria: Criterion[];
+};
+export type FunnelDetail = { id: string; name: string; version: number; archived: boolean; stages: FunnelStageSpec[] };
+export type FunnelPreset = { key: string; name: string; description: string; stages: FunnelStageSpec[] };
+
 export type StageEdit = {
   name: string;
   purpose?: string | null;
@@ -225,6 +321,15 @@ export type JobCandidateListItem = {
   current_stage_name: string | null;
   pipeline_state: string | null;
 };
+export type OrgCandidateListItem = {
+  id: string;
+  candidate: CandidateSummary;
+  job_id: string;
+  job_title: string;
+  current_stage_name: string | null;
+  pipeline_state: string | null;
+  created_at: string;
+};
 export type CandidateImport = {
   full_name: string;
   phone?: string;
@@ -233,6 +338,8 @@ export type CandidateImport = {
   source?: string;
   known_facts?: Record<string, string>;
 };
+export type CsvImportResult = { added: number; skipped: number; errors: Array<{ row: number; reason: string }> };
+export type PipelinePage = { items: JobCandidateListItem[]; total: number; page: number; page_size: number };
 export type StageRun = { id: string; stage_id: string; stage_name: string | null; status: string };
 export type CallItem = { id: string; normalized_status: string; hunar_call_id: string | null };
 export type Fact = { field_key: string; value: string | null; source: string | null };
@@ -267,6 +374,7 @@ export type PeopleSearchResult = {
   page: number;
   has_more: boolean;
   suggested_query: PeopleSearchInput;
+  applied_query: PeopleSearchInput;
   candidates: ExternalCandidate[];
 };
 export type SettingsUser = { id: string; name: string | null; email: string; role: string };
@@ -297,6 +405,7 @@ export type InviteCreated = {
 };
 export type InvitePreview = { org_name: string; email: string; role: string };
 export type SettingsUpdate = {
+  org_name?: string;
   default_provider?: string | null;
   live_calls_enabled?: boolean;
   provider_keys?: Record<string, string>;

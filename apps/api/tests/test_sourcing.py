@@ -1,9 +1,9 @@
 """Sourcing (People Search & Outreach — Flow B) API tests.
 
-Covers: JD-derived suggested query, sample-provider search + filtering, apollo requested but
-plan-gated → sample fallback flagged, and adding selected candidates to the pipeline
-(including de-duplication). Network-free: the sample provider is offline; the apollo path is
-forced to fail via a monkeypatched registry so no real HTTP is attempted.
+Covers: JD-derived suggested query, explicit sample-provider search + filtering, Auto PDL
+search behavior, and adding selected candidates to the pipeline (including de-duplication).
+Network-free: the sample provider is offline, and the Auto PDL adapter is monkeypatched so no
+real HTTP is attempted.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from app.db.session import engine
+from app.integrations.people_search.base import ExternalCandidate, PeopleSearchResult
 from app.main import app
 
 
@@ -92,6 +93,83 @@ def test_search_unconfigured_provider_returns_502(client):
     assert "not configured" in r.json()["error"]["message"].lower()
 
 
+def test_auto_search_broadens_a_zero_result_from_pdl(client, monkeypatch):
+    """Auto mode keeps the verified PDL provider and relaxes seniority after zero matches."""
+    h = _auth(client)
+    jid = _job_with_jd(client, h)
+    queries = []
+
+    class FakePdl:
+        key = "pdl"
+
+        def search(self, query):
+            queries.append(query)
+            if len(queries) == 1:
+                return PeopleSearchResult([], total=0, page=query.page, has_more=False, provider="pdl")
+            return PeopleSearchResult(
+                [ExternalCandidate(source="pdl", source_id="person-1", full_name="Asha Rao")],
+                total=1, page=query.page, has_more=False, provider="pdl",
+            )
+
+    monkeypatch.setattr("app.modules.sourcing.service.get_people_search_provider", lambda *_args, **_kwargs: FakePdl())
+    monkeypatch.setattr(
+        "app.modules.sourcing.service.SettingsService.provider_env",
+        lambda _self, _org_id: {"PDL_API_KEY": "test-key"},
+    )
+    r = client.post(
+        f"/jobs/{jid}/sourcing/search",
+        json={"provider": "auto", "titles": ["Backend Engineer"], "seniorities": ["mid"]},
+        headers=h,
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["provider"] == "pdl"
+    assert r.json()["requested_provider"] == "auto"
+    assert r.json()["candidates"][0]["full_name"] == "Asha Rao"
+    assert "seniority" in (r.json()["notice"] or "").lower()
+    assert r.json()["suggested_query"]["seniorities"] == ["mid"]
+    assert r.json()["applied_query"]["seniorities"] == []
+    assert len(queries) == 2
+    assert queries[0].seniorities == ["mid"]
+    assert queries[1].seniorities == []
+
+
+def test_auto_search_requires_configured_pdl(client):
+    h = _auth(client)
+    jid = _job_with_jd(client, h)
+
+    r = client.post(f"/jobs/{jid}/sourcing/search", json={"provider": "auto"}, headers=h)
+
+    assert r.status_code == 502, r.text
+    assert r.json()["error"]["code"] == "provider_unavailable"
+    assert "people data labs" in r.json()["error"]["message"].lower()
+
+
+def test_auto_search_explains_empty_result_without_relaxable_filters(client, monkeypatch):
+    h = _auth(client)
+    jid = _job_with_jd(client, h)
+    calls = []
+
+    class FakePdl:
+        key = "pdl"
+
+        def search(self, query):
+            calls.append(query)
+            return PeopleSearchResult([], total=0, page=query.page, has_more=False, provider="pdl")
+
+    monkeypatch.setattr("app.modules.sourcing.service.get_people_search_provider", lambda *_args, **_kwargs: FakePdl())
+    monkeypatch.setattr(
+        "app.modules.sourcing.service.SettingsService.provider_env",
+        lambda _self, _org_id: {"PDL_API_KEY": "test-key"},
+    )
+    r = client.post(f"/jobs/{jid}/sourcing/search", json={"provider": "auto"}, headers=h)
+
+    assert r.status_code == 200, r.text
+    assert len(calls) == 1
+    assert "no matches found" in (r.json()["notice"] or "").lower()
+    assert r.json()["applied_query"] == r.json()["suggested_query"]
+
+
 def test_add_candidates_to_pipeline_and_dedup(client):
     h = _auth(client)
     jid = _job_with_jd(client, h)
@@ -127,6 +205,21 @@ def test_add_requires_selection(client):
     assert client.post(f"/jobs/{jid}/sourcing/add", json={"candidates": []}, headers=h).status_code == 422
 
 
+def test_archived_job_rejects_adding_sourced_candidates(client):
+    h = _auth(client)
+    jid = _job_with_ai_workflow(client, h)
+    assert client.post(f"/jobs/{jid}/archive", headers=h).status_code == 200
+
+    r = client.post(
+        f"/jobs/{jid}/sourcing/add",
+        json={"candidates": [{"source": "pdl", "source_id": "person-1", "full_name": "Asha Rao"}]},
+        headers=h,
+    )
+
+    assert r.status_code == 409, r.text
+    assert "inactive" in r.json()["error"]["message"].lower()
+
+
 def _job_with_ai_workflow(client, h):
     """Job with a confirmed JD and an approved workflow whose first stage is AI (launchable)."""
     jid = _job_with_jd(client, h)
@@ -137,6 +230,7 @@ def _job_with_ai_workflow(client, h):
     ]}
     client.put(f"/jobs/{jid}/workflow/versions/{wf['id']}/stages", json=stages, headers=h)
     client.post(f"/jobs/{jid}/workflow/versions/{wf['id']}/approve", headers=h)
+    assert client.post(f"/jobs/{jid}/activate", headers=h).status_code == 200
     return jid
 
 
@@ -144,6 +238,19 @@ def _source_one(client, h, jid):
     found = client.post(f"/jobs/{jid}/sourcing/search", json={}, headers=h).json()["candidates"][0]
     client.post(f"/jobs/{jid}/sourcing/add", json={"candidates": [found]}, headers=h)
     return client.get(f"/jobs/{jid}/candidates", headers=h).json()[0]["id"]
+
+
+def test_archived_job_rejects_launching_an_outreach_call(client):
+    h = _auth(client)
+    jid = _job_with_ai_workflow(client, h)
+    jc_id = _source_one(client, h, jid)
+    assert client.post(f"/job-candidates/{jc_id}/enrich", headers=h).status_code == 201
+    assert client.post(f"/jobs/{jid}/archive", headers=h).status_code == 200
+
+    r = client.post(f"/job-candidates/{jc_id}/launch", headers=h)
+
+    assert r.status_code == 409, r.text
+    assert "inactive" in r.json()["error"]["message"].lower()
 
 
 def test_enrich_sample_then_outreach(client):

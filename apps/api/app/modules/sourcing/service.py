@@ -4,8 +4,9 @@ Responsibilities (platform-owned, per docs/architecture.md §Search/Outreach):
 
 - Suggest a normalized search query from a job's approved/latest JD metadata, so the recruiter
   starts from something useful instead of a blank form.
-- Run people search against the provider the recruiter selected (or the configured default),
-  across the real providers (Apollo, PDL, Proxycurl, Coresignal). Real data only: a provider
+- Run people search against the provider the recruiter selected (or Auto, which is limited to
+  configured PDL), across the real providers (Apollo, PDL, Proxycurl, Coresignal). Real data
+  only: a provider
   that is unconfigured, plan-gated (Apollo Free returns 403), or failing raises
   SourcingProviderError with the real reason — the platform never fabricates results.
 - Add selected external candidates into the job's pipeline as SOURCED, with provenance
@@ -34,6 +35,7 @@ from app.integrations.people_search.base import (
 )
 from app.integrations.people_search.registry import (
     PROVIDER_LABELS,
+    configured_providers,
     get_people_search_provider,
 )
 from app.modules.audit.log import write_audit
@@ -76,8 +78,9 @@ class SourcingProviderError(RuntimeError):
 @dataclass(frozen=True)
 class SearchOutcome:
     result: PeopleSearchResult
+    applied_query: PeopleSearchQuery  # query that produced this result (may be Auto-broadened)
     provider: str  # provider that actually produced results
-    requested_provider: str  # provider the platform is configured to use
+    requested_provider: str  # provider requested by recruiter, or "auto"
     is_sample: bool  # True when sample data was returned instead of live results
     notice: str | None  # human-readable reason shown to the recruiter when degraded
 
@@ -136,18 +139,38 @@ class SourcingService:
     ) -> SearchOutcome:
         """Run a real people search against the chosen provider.
 
-        No sample fallback: results come only from the real provider the recruiter selected
-        (or the configured default). A provider that is unconfigured, plan-gated, or failing
+        No sample fallback: results come only from the real provider the recruiter selected.
+        Auto is limited to configured PDL and makes at most one transparent zero-result retry
+        with a less restrictive filter. A provider that is unconfigured, plan-gated, or failing
         raises SourcingProviderError with the real reason — the platform never substitutes
         fabricated data for a failed lookup."""
         requested = (requested_provider or "").lower() or None
+        env = SettingsService(self._s).provider_env(job.org_id)
+        is_auto = requested == "auto"
         try:
-            env = SettingsService(self._s).provider_env(job.org_id)
-            provider = get_people_search_provider(requested or env.get("PEOPLE_SEARCH_PROVIDER"), env=env)
+            if is_auto:
+                if "pdl" not in configured_providers(env):
+                    raise ValueError("Auto search needs People Data Labs configured. Add its API key in Settings or choose a provider manually.")
+                provider = get_people_search_provider("pdl", env=env)
+            else:
+                provider = get_people_search_provider(requested or env.get("PEOPLE_SEARCH_PROVIDER"), env=env)
         except ValueError as exc:
             raise SourcingProviderError(str(exc), provider=requested or "default") from exc
         try:
             result = provider.search(query)
+            applied_query = query
+            notice = None
+            if is_auto and not result.candidates:
+                broadened, relaxed_filter = _broaden_auto_query(query)
+                if broadened is not None:
+                    result = provider.search(broadened)
+                    applied_query = broadened
+                    if result.candidates:
+                        notice = f"No exact matches in People Data Labs, so Auto search broadened the query by removing {relaxed_filter}."
+                    else:
+                        notice = f"No matches found, including an Auto-broadened search without {relaxed_filter}."
+                else:
+                    notice = "No matches found in configured People Data Labs for this search. Try adjusting filters or choose a provider manually."
         except Exception as exc:  # transport / plan gate / vendor error
             reason = _short_reason(exc)
             write_audit(
@@ -158,8 +181,9 @@ class SourcingService:
             label = PROVIDER_LABELS.get(provider.key, provider.key)
             raise SourcingProviderError(f"{label} search failed: {reason}", provider=provider.key) from exc
         return SearchOutcome(
-            result=result, provider=provider.key, requested_provider=provider.key,
-            is_sample=provider.key == "sample", notice=None,
+            result=result, applied_query=applied_query, provider=provider.key,
+            requested_provider="auto" if is_auto else provider.key,
+            is_sample=provider.key == "sample", notice=notice,
         )
 
     # --- enrichment (reveal contact for outreach) -------------------------------
@@ -310,6 +334,21 @@ def _seniority_from_experience(lo: int | None, hi: int | None) -> list[str]:
     if years <= 9:
         return ["senior"]
     return ["lead"]
+
+
+def _broaden_auto_query(query: PeopleSearchQuery) -> tuple[PeopleSearchQuery | None, str | None]:
+    """Relax one restrictive Auto-search filter, preserving the recruiter's other criteria."""
+    if query.seniorities:
+        return PeopleSearchQuery(
+            titles=list(query.titles), keywords=list(query.keywords), locations=list(query.locations),
+            skills=list(query.skills), seniorities=[], page=query.page, page_size=query.page_size,
+        ), "seniority"
+    if query.locations:
+        return PeopleSearchQuery(
+            titles=list(query.titles), keywords=list(query.keywords), locations=[],
+            skills=list(query.skills), seniorities=list(query.seniorities), page=query.page, page_size=query.page_size,
+        ), "location"
+    return None, None
 
 
 def _short_reason(exc: Exception) -> str:

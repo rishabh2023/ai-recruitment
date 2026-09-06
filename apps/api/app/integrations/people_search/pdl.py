@@ -17,6 +17,7 @@ never fabricates them. stdlib-only HTTP so the adapter has no extra runtime depe
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -79,25 +80,51 @@ class PdlProvider:
     def _build_es_query(query: PeopleSearchQuery) -> dict[str, Any]:
         """Map the normalized query to a PDL Elasticsearch bool query.
 
-        Titles/locations are OR-ed within their field; keywords/skills match job title or
-        skills. Only documented PDL fields are referenced; unknown filters are omitted.
+        Recall-tuned so a realistic JD returns people instead of an empty set:
+        - Titles use an analyzed `match_phrase` on a cleaned title (parentheticals/slashes
+          stripped), OR-ed together — an exact `terms` keyword match on "Full Stack Engineer
+          (MERN)" matches nobody, whereas the phrase "full stack engineer" matches real titles.
+        - Locations are OR-ed (at least one must match).
+        - Skills/keywords are `should` (desirable, not mandatory): AND-ing every skill as a
+          hard filter is the classic recall killer — nobody has all of them tagged. As `should`
+          they rank matches up without excluding profiles.
+        - Seniority is applied only for values that are valid PDL `job_title_levels`; our
+          internal buckets that PDL has no equivalent for (e.g. "mid") are omitted rather than
+          filtering everything out.
+        Only documented PDL fields are referenced; unknown filters are omitted.
         """
         must: list[dict[str, Any]] = []
-        if query.titles:
-            must.append({"terms": {"job_title": [t.lower() for t in query.titles]}})
+        should: list[dict[str, Any]] = []
+        title_clauses = [
+            {"match_phrase": {"job_title": cleaned}}
+            for cleaned in (_clean_title(t) for t in query.titles)
+            if cleaned
+        ]
+        # A bool with only `should` requires ≥1 match by Elasticsearch default (PDL rejects an
+        # explicit `minimum_should_match` clause), so these OR-and-require the title/location.
+        if title_clauses:
+            must.append({"bool": {"should": title_clauses}})
         if query.locations:
             must.append(
                 {"bool": {"should": [{"match": {"location_name": loc.lower()}} for loc in query.locations]}}
             )
         for skill in query.skills:
-            must.append({"match": {"skills": skill.lower()}})
+            should.append({"match": {"skills": skill.lower()}})
         for kw in query.keywords:
-            must.append(
+            should.append(
                 {"bool": {"should": [{"match": {"job_title": kw.lower()}}, {"match": {"skills": kw.lower()}}]}}
             )
-        if query.seniorities:
-            must.append({"terms": {"job_title_levels": [s.lower() for s in query.seniorities]}})
-        return {"bool": {"must": must}} if must else {"bool": {"must": [{"exists": {"field": "linkedin_url"}}]}}
+        levels = [_PDL_LEVELS[s.lower()] for s in query.seniorities if s.lower() in _PDL_LEVELS]
+        if levels:
+            must.append({"terms": {"job_title_levels": levels}})
+        bool_q: dict[str, Any] = {}
+        if must:
+            bool_q["must"] = must
+        if should:
+            bool_q["should"] = should  # optional boost alongside `must` (does not exclude)
+        if not bool_q:
+            bool_q["must"] = [{"exists": {"field": "linkedin_url"}}]
+        return {"bool": bool_q}
 
     @staticmethod
     def _to_candidate(person: dict[str, Any]) -> ExternalCandidate:
@@ -159,6 +186,29 @@ class PdlProvider:
             raise PdlError(f"PDL {path} HTTP {exc.code}: {detail}") from exc
         except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as exc:
             raise PdlError(f"PDL {path} request failed: {exc}") from exc
+
+
+# Our internal seniority buckets -> PDL's documented `job_title_levels`. Buckets PDL has no
+# equivalent for (e.g. "mid") are intentionally absent, so they are dropped rather than
+# filtering out every profile.
+_PDL_LEVELS: dict[str, str] = {
+    "junior": "entry",
+    "entry": "entry",
+    "senior": "senior",
+    "manager": "manager",
+    "lead": "manager",
+    "director": "director",
+    "vp": "vp",
+    "cxo": "cxo",
+}
+
+
+def _clean_title(title: str) -> str:
+    """Normalize a JD title into a phrase PDL can match: drop parentheticals ("(MERN)"),
+    keep only the part before a slash/comma/pipe, collapse whitespace, lowercase."""
+    t = re.sub(r"\([^)]*\)", " ", title or "")
+    t = re.split(r"[/|,]", t)[0]
+    return " ".join(t.split()).lower()
 
 
 def _str(v: Any) -> str | None:

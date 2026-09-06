@@ -33,6 +33,9 @@ def _role_family(text: str) -> str:
 class StubLLMProvider:
     key = "stub"
 
+    def read_pdf_text(self, pdf_bytes: bytes) -> str:
+        return ""  # the offline stub has no vision; caller falls back to paste
+
     def extract_job(self, jd_text: str) -> ExtractedJob:
         text = (jd_text or "").strip()
         first_line = text.splitlines()[0].strip() if text else None

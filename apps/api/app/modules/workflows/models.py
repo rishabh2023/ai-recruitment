@@ -28,6 +28,7 @@ class WorkflowTemplate(Base):
     id = uuid_pk()
     org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     name = Column(Text, nullable=False)
+    archived_at = Column(DateTime(timezone=True))  # set when archived; funnel hidden from default list
     created_at = created_at()
 
 

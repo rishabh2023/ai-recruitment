@@ -3,14 +3,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Settings } from "@/lib/api";
 
+type SettingsTab = "organization" | "providers" | "outreach" | "team";
+
 export default function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState<SettingsTab>("organization");
 
   // local edits
+  const [orgName, setOrgName] = useState("");
   const [defaultProvider, setDefaultProvider] = useState("");
   const [liveCalls, setLiveCalls] = useState(false);
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
@@ -27,6 +31,7 @@ export default function SettingsPage() {
     try {
       const data = await api.getSettings();
       setS(data);
+      setOrgName(data.org_name);
       setDefaultProvider(data.default_provider ?? "");
       setLiveCalls(data.live_calls_enabled);
     } catch (e) {
@@ -54,6 +59,7 @@ export default function SettingsPage() {
     try {
       const data = await api.updateSettings(patch);
       setS(data);
+      setOrgName(data.org_name);
       setDefaultProvider(data.default_provider ?? "");
       setLiveCalls(data.live_calls_enabled);
       setFlash(note);
@@ -114,6 +120,12 @@ export default function SettingsPage() {
     { key: "hiring_manager", label: "Hiring Manager" },
     { key: "admin", label: "Admin" },
   ];
+  const tabs: { key: SettingsTab; label: string; detail: string }[] = [
+    { key: "organization", label: "Organization", detail: "Profile" },
+    { key: "providers", label: "Providers", detail: "Candidate discovery" },
+    { key: "outreach", label: "Outreach", detail: "Calling controls" },
+    { key: "team", label: "Team", detail: "Access management" },
+  ];
 
   return (
     <main className="container settings-page">
@@ -122,6 +134,10 @@ export default function SettingsPage() {
           <p className="eyebrow">Organization</p>
           <h1>Settings</h1>
           <p>{s.org_name} · configure people-search providers, outreach calling, and your team.</p>
+        </div>
+        <div className="settings-org-mark" aria-label={`${s.org_name} organization`}>
+          <span>{s.org_name.slice(0, 1).toUpperCase()}</span>
+          <small>Workspace</small>
         </div>
       </header>
 
@@ -132,20 +148,73 @@ export default function SettingsPage() {
       {error && <p className="error">{error}</p>}
       {flash && <p className="sourcing-flash" role="status">{flash}</p>}
 
-      {/* People-search providers */}
-      <section className="settings-card">
+      <div className="settings-tabs" role="tablist" aria-label="Settings sections">
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.key}
+            className={activeTab === tab.key ? "active" : ""}
+            onClick={() => setActiveTab(tab.key)}
+          >
+            <span>{tab.label}</span>
+            <small>{tab.detail}</small>
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "organization" && <section className="settings-card settings-profile-card" role="tabpanel">
         <div className="settings-card-head">
+          <p className="settings-section-kicker">Organization profile</p>
+          <h2>Organization name</h2>
+          <p className="muted">This name is shown throughout your recruitment workspace.</p>
+        </div>
+        {admin ? (
+          <div className="settings-profile-form">
+            <label className="settings-inline">
+              <span className="field-label">Organization name</span>
+              <input
+                value={orgName}
+                maxLength={120}
+                onChange={(e) => setOrgName(e.target.value)}
+                placeholder="Your organization"
+              />
+            </label>
+            <button
+              disabled={saving || !orgName.trim() || orgName.trim() === s.org_name}
+              onClick={() => save({ org_name: orgName.trim() }, "Organization name updated.")}
+            >
+              Save name
+            </button>
+          </div>
+        ) : (
+          <p className="settings-readonly-value">{s.org_name}</p>
+        )}
+      </section>}
+
+      {/* People-search providers */}
+      {activeTab === "providers" && <>
+      <section className="settings-card" role="tabpanel">
+        <div className="settings-card-head">
+          <p className="settings-section-kicker">Candidate discovery</p>
           <h2>People-search providers</h2>
           <p className="muted">Add an API key to search real candidates with that provider. Keys are stored securely and never shown again.</p>
         </div>
         <div className="settings-providers">
           {s.providers.map((p) => (
             <div className="settings-provider" key={p.key}>
-              <div className="settings-provider-main">
-                <div className="row" style={{ gap: 8, alignItems: "center" }}>
-                  <strong>{p.label}</strong>
-                  <span className={`badge ${p.configured ? "active" : "draft"}`}>
-                    {p.configured ? "configured" : "not configured"}
+              <div className="settings-provider-identity">
+                <div className="settings-provider-icon" aria-hidden="true">{p.label.slice(0, 1)}</div>
+                <div className="settings-provider-main">
+                  <div className="row" style={{ gap: 8, alignItems: "center" }}>
+                    <strong>{p.label}</strong>
+                    <span className={`badge ${p.configured ? "active" : "draft"}`}>
+                      {p.configured ? "connected" : "not connected"}
+                    </span>
+                  </div>
+                  <span className="settings-provider-status">
+                    {p.configured ? "Ready for candidate searches" : "Add a key to enable searches"}
                   </span>
                 </div>
               </div>
@@ -170,7 +239,15 @@ export default function SettingsPage() {
             </div>
           ))}
         </div>
-        {admin && (
+      </section>
+
+      <section className="settings-card settings-defaults-card">
+        <div className="settings-card-head">
+          <p className="settings-section-kicker">Search defaults</p>
+          <h2>Preferred provider</h2>
+          <p className="muted">This provider is selected automatically when a recruiter starts a new search.</p>
+        </div>
+        {admin ? (
           <div className="settings-row">
             <label className="settings-inline">
               <span className="field-label">Default provider for new searches</span>
@@ -186,24 +263,30 @@ export default function SettingsPage() {
               Save default
             </button>
           </div>
+        ) : (
+          <p className="settings-readonly-value">{s.providers.find((p) => p.key === defaultProvider)?.label ?? "No provider selected"}</p>
         )}
       </section>
+      </>}
 
       {/* Outreach calling */}
-      <section className="settings-card">
+      {activeTab === "outreach" && <section className="settings-card" role="tabpanel">
         <div className="settings-card-head">
+          <p className="settings-section-kicker">Calling controls</p>
           <h2>Outreach calling</h2>
           <p className="muted">When on, launching an outreach or interview stage places a real Hunar call (a Hunar API key must also be configured on the server). When off, calls are queued but not dialed.</p>
         </div>
-        <label className="approval-toggle" style={{ maxWidth: 480 }}>
+        <label className="approval-toggle settings-call-control">
           <input type="checkbox" checked={liveCalls} disabled={!admin || saving} onChange={(e) => { setLiveCalls(e.target.checked); save({ live_calls_enabled: e.target.checked }, `Live calling ${e.target.checked ? "enabled" : "disabled"}.`); }} />
-          <span>Enable live outbound calls<small>Real candidates will be dialed. Keep off unless you intend to place live calls.</small></span>
+          <span><strong>Enable live outbound calls</strong><small>Real candidates will be dialed. Keep off unless you intend to place live calls.</small></span>
+          <span className={`settings-call-status ${liveCalls ? "on" : "off"}`}>{liveCalls ? "Live" : "Paused"}</span>
         </label>
-      </section>
+      </section>}
 
       {/* Team */}
-      <section className="settings-card">
+      {activeTab === "team" && <section className="settings-card" role="tabpanel">
         <div className="settings-card-head">
+          <p className="settings-section-kicker">Access management</p>
           <h2>Team</h2>
           <p className="muted">People in {s.org_name}. Role-based access (admin can manage settings).</p>
         </div>
@@ -268,7 +351,7 @@ export default function SettingsPage() {
             )}
           </div>
         )}
-      </section>
+      </section>}
     </main>
   );
 }

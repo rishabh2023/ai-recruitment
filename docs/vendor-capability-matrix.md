@@ -31,7 +31,7 @@ Base URL (verified): `https://api.voice.hunar.ai/external/v1`. Auth: `X-API-Key`
 | Authentication | `VERIFIED` | `[live]` `[docs]` | `X-API-Key` header confirmed working against live API. |
 | Agent creation / update | `VERIFIED` | `[openapi]` | `POST/PUT /agents/`. Required: name, voice_persona, agent_prompt, objective, introduction, result_schema (+ language default ENGLISH). Status enum DRAFT/ACTIVE/ARCHIVED. |
 | Runtime / custom variables (per-call context) | `VERIFIED` | `[openapi]` | `custom_data` (key→string) on single & bulk calls; agent exposes `custom_variables`/`required_variables`. **Supports the stage-driven "reuse agent + inject context" model — no per-candidate agents.** |
-| Outbound single call | `VERIFIED` (live — call placed + COMPLETED) | `[openapi]` `[live-call]` | `POST /calls/` returns 200 with the created call (id, status NOT_STARTED, auto-assigned `from_phone_number`). A real call completed end-to-end 2026-09-06 (answered_by HUMAN, 117s). **Agent gate:** the agent's `required_variables` must all be present in `custom_data` or the API returns 422 (e.g. "AI Hiring Assistant" requires `candidate_name, job_role, company, location`). Earlier "no from-number" blocker is superseded — Hunar assigned one automatically. |
+| Outbound single call | `VERIFIED` (live — call placed + COMPLETED) | `[openapi]` `[live-call]` | `POST /calls/` returns 200 with the created call (id, status NOT_STARTED, auto-assigned `from_phone_number`). A real call completed end-to-end 2026-09-06 (answered_by HUMAN, 117s). **Agent gate:** the agent's `required_variables` must all be present in `custom_data` or the API returns 422 (e.g. "AI Hiring Assistant" requires `candidate_name, job_role, company, location`). Earlier "no from-number" blocker is superseded — Hunar assigned one automatically. **Callee number must be E.164** (`+<country><national>`) — a bare national number is accepted but does not dial; the platform now stores candidate phones E.164 (country-code selector / CSV `country_code`). **Time-of-day:** a dispatched call sits at `NOT_STARTED`→`SCHEDULED` and Hunar places it during acceptable calling hours (it will not cold-dial at night); status advances to `RINGING`/`IN_PROGRESS` when it actually dials (poll `POST /calls/{id}/sync`). |
 | Bulk call | `VERIFIED` | `[openapi]` | `POST /calls/bulk/`, `data` 1–10000 items, `remove_invalid_rows`/`remove_duplicate_phone_numbers` default true. |
 | Webhook events (types, payload, signature) | `VERIFIED` | `[docs]` | Events: `call_status_updated`, `call_recording_done`, `call_result_done`, `call_summary`. HMAC-SHA256 over `{timestamp}.{raw_body}`, header `X-Hunar-Signature` (comma-sep for key rotation) + `X-Hunar-Timestamp`. Verifier implemented + unit-checked in `apps/api/app/integrations/hunar`. |
 | Call status / result retrieval | `VERIFIED` | `[openapi]` `[live]` | `GET /calls/{id}/` returns status, `result`, `recording_url`, durations, engagement/answered_by, retry fields. List paginates (`count/next/previous/results`, calls page_size ≤ 200). |
@@ -46,8 +46,12 @@ Base URL (verified): `https://api.voice.hunar.ai/external/v1`. Auth: `X-API-Key`
 
 The platform is **not Apollo-only**. The assignment permits Apollo.io, People Data Labs
 (PDL), Proxycurl, or Coresignal — **all four are implemented** as real adapters
-(`search()` + `enrich()`); the recruiter picks a provider per search, or the org default is
-used. There is **no sample/fabricated data** in the product: an unconfigured or plan-gated
+(`search()` + `enrich()`); the recruiter may pick a provider per search or use **Auto**.
+Auto is intentionally PDL-only because it is the configured provider with the strongest
+verified adapter evidence: it runs
+the exact query and makes at most one transparent zero-result retry with a less restrictive
+filter. It does not silently fan out to unverified or plan-gated providers. There is **no
+sample/fabricated data** in the product: an unconfigured or plan-gated
 provider returns an honest error (HTTP 502), never invented results. Keys are configured
 per-org in Settings (`org_settings.provider_keys`, overlaid on `.env`). See ADR-0001 and
 `apps/api/app/integrations/people_search/`.
@@ -56,7 +60,7 @@ per-org in Settings (`org_settings.provider_keys`, overlaid on `.env`). See ADR-
 
 | Provider | Status | Evidence |
 | -------- | ------ | -------- |
-| **People Data Labs (PDL)** | `VERIFIED` (live) | Real `POST /v5/person/search` returned real profiles with a live key (e.g. "software engineer" → 1.78M matches; real names/companies incl. Google, Snap, EA). Adapter quirks fixed against live API: `from` offset removed (use `scroll_token`), 404 "no records" → empty result, plan-gated fields returned as boolean `true` → coerced to absent. Free-tier search returns profiles but **not** contact details (enrichment/phone is plan-gated). |
+| **People Data Labs (PDL)** | `VERIFIED` (live) | Real `POST /v5/person/search` returned real profiles with a live key (e.g. "software engineer" → 1.78M matches; a JD-derived "Full Stack Engineer (MERN)" query → 63k matches). Adapter quirks fixed against live API: `from` offset removed (use `scroll_token`), 404 "no records" → empty result, plan-gated fields returned as boolean `true` → coerced to absent. **Query is recall-tuned** so realistic JDs return people instead of zero: titles use analyzed `match_phrase` on a cleaned title (parentheticals/slashes stripped) — an exact `terms` keyword match returned nobody; skills/keywords are `should` (boost, not AND-ed hard filters); seniority applies only for values that are valid PDL `job_title_levels` (unmappable buckets like "mid" are dropped); PDL rejects an explicit `minimum_should_match` clause, so should-only bools rely on the ES default. Free-tier search returns profiles but **not** contact details (enrichment/phone is plan-gated). |
 | **Apollo.io** | `VERIFIED` (contract); Search **plan-gated** | `[apollo-live]` `POST /mixed_people/(api_)search` → **HTTP 403 API_INACCESSIBLE** "not included in your Free plan … not accessible even with a master key." Adapter is correct; needs a paid plan. |
 | **Proxycurl / Coresignal** | Implemented to documented contract; **not live-verified** | Adapters written to vendor docs (two-step search→enrich); no key exercised yet. Treated as unverified until a live key confirms mapping. |
 
