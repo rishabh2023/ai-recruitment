@@ -9,6 +9,20 @@ from __future__ import annotations
 
 import os
 
+# SAFETY: redirect the whole test process to a dedicated *_test database BEFORE anything
+# imports app.config / app.db.session. The HTTP tests drive the real app (which builds its
+# engine from DATABASE_URL) and TRUNCATE tables, so without this a plain `pytest` against the
+# dev DATABASE_URL would wipe live/demo data (including saved provider API keys). Set
+# TEST_DATABASE_URL to override; otherwise we append `_test` to the configured DB name.
+_explicit = os.environ.get("TEST_DATABASE_URL")
+if _explicit:
+    os.environ["DATABASE_URL"] = _explicit
+else:
+    _base = os.environ.get("DATABASE_URL", "postgresql://recruitment:recruitment@localhost:5432/recruitment")
+    _head, _sep, _db = _base.rpartition("/")
+    if not _db.endswith("_test"):
+        os.environ["DATABASE_URL"] = f"{_head}{_sep}{_db}_test"
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
@@ -40,9 +54,21 @@ def _hermetic_external(monkeypatch):
 
 
 def _url() -> str:
-    url = os.environ.get(
-        "DATABASE_URL", "postgresql://recruitment:recruitment@localhost:5432/recruitment"
-    )
+    """Resolve the test database URL — NEVER the dev database.
+
+    The HTTP fixtures TRUNCATE tables, so pointing tests at the dev DB wipes live/demo data
+    (including saved provider keys). To prevent that, we use TEST_DATABASE_URL if set, else
+    derive a dedicated `<db>_test` database from DATABASE_URL. Create it once with:
+      createdb recruitment_test && DATABASE_URL=…/recruitment_test alembic upgrade head
+    """
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        base = os.environ.get(
+            "DATABASE_URL", "postgresql://recruitment:recruitment@localhost:5432/recruitment"
+        )
+        # Append _test to the database name unless it already targets a *_test DB.
+        head, sep, dbname = base.rpartition("/")
+        url = base if dbname.endswith("_test") else f"{head}{sep}{dbname}_test"
     return url.replace("postgresql://", "postgresql+psycopg://", 1) if url.startswith("postgresql://") else url
 
 
