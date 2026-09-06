@@ -94,10 +94,16 @@ platform-LLM concern, kept out of the adapter. Implemented in
 Platform-side product intelligence only: JD understanding, role classification, structured
 skill extraction, draft workflow/rubric generation. Never candidate conversation, never
 duplicating Hunar evaluation. Implemented in `apps/api/app/integrations/llm/` behind an
-`LLMProvider` protocol returning **drafts** (`ExtractedJob`, `DraftStage`); a deterministic
-offline stub is the default so the flow runs and tests are stable, with a real provider
-pluggable when `PLATFORM_LLM_API_KEY` is set. All outputs require human review/approval before
-they execute (enforced by `WorkflowService`/`JobService` gates).
+`LLMProvider` protocol returning **drafts** (`ExtractedJob`, `DraftStage`). The real provider
+is **Claude** (`AnthropicLLMProvider`, model `claude-haiku-4-5`), used for JD extraction when
+`PLATFORM_LLM_API_KEY` (an Anthropic key) is set; otherwise a deterministic offline stub runs
+so the flow works and tests stay stable. Any API/parse error falls back to the stub — JD entry
+never breaks on a transient LLM failure. All outputs require human review/approval before they
+execute (enforced by `WorkflowService`/`JobService` gates).
+
+JD can be provided two ways: `POST /jobs/{id}/versions` (pasted `jd_text`) or
+`POST /jobs/{id}/versions/upload` (multipart PDF — text extracted server-side via `pypdf`, then
+the same extraction path). Both create an unconfirmed `JobVersion`.
 
 ## Webhook validation and idempotency
 

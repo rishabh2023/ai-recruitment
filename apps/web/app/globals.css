@@ -137,3 +137,12 @@ ul.activity { list-style: none; margin: 0; padding: 0; display: flex; flex-direc
 ul.activity li { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
 ul.activity li:last-child { border-bottom: none; padding-bottom: 0; }
 ul.activity time { font-size: 12px; white-space: nowrap; }
+
+/* File upload dropzone */
+.filedrop {
+  display: flex; align-items: center; gap: 10px; cursor: pointer;
+  border: 1px dashed var(--border); border-radius: 10px; padding: 18px 16px;
+  background: #0f1117; color: var(--muted); font-size: 14px; margin: 0;
+}
+.filedrop:hover { border-color: var(--accent); color: var(--text); }
+.fileicon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: #1b2333; color: var(--accent); flex-shrink: 0; }

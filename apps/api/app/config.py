@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = False
     session_ttl_hours: int = 12
 
+    # Platform LLM (product intelligence only: JD understanding, role classification, draft
+    # workflow/rubric generation). When a key is set, JD extraction uses Claude; otherwise the
+    # deterministic offline stub is used so the flow works and tests stay stable.
+    platform_llm_api_key: str = ""
+    platform_llm_model: str = "claude-haiku-4-5"
+
     @property
     def sqlalchemy_url(self) -> str:
         url = self.database_url

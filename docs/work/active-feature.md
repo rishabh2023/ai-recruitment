@@ -2,14 +2,29 @@
 
 This file is the resume point for any agent. Keep it current.
 
-- **Active feature:** Auth (login + **signup**), candidate import + timeline UI, and a
-  product **dashboard shell with sidebar** all done. Next: Phase 4 (Apollo) or live Hunar,
-  transition-policy auto PASS/REJECT, per-role widget/permission differences.
+- **Active feature:** Auth (login + signup), candidate import + timeline UI, dashboard shell,
+  **JD-from-PDF upload**, and **real Claude Haiku JD extraction** all done. Next: Phase 4
+  (Apollo) or live Hunar, transition-policy auto PASS/REJECT, per-role widgets.
 - **Current agent:** Claude Code
 - **Branch / worktree:** repository root (`main`); commits `6dffa77` (baseline), `7640f2c`
-  (auth), `cdd8190` (candidate/timeline UI), + this session's signup/dashboard commit.
-- **Status:** Phases 0–3 + auth + candidate/timeline UI + dashboard shell done. **56 API/py
-  tests pass**; web builds + typechecks. Verified in-browser end to end.
+  (auth), `cdd8190` (candidate/timeline UI), `62fa2b2` (signup/dashboard), + this session's
+  PDF + Haiku commit.
+- **Status:** Phases 0–3 + auth + candidate/timeline UI + dashboard + JD PDF + Claude LLM
+  done. **66 API/py tests pass**; web builds + typechecks. Verified in-browser end to end.
+
+## JD PDF upload + Claude Haiku extraction — done this session
+
+- **JD from PDF:** `POST /jobs/{job_id}/versions/upload` (multipart) extracts text with `pypdf`
+  and runs the **same** JD-version path as pasting. Rejects non-PDF, >10 MB, and scanned/
+  image-only PDFs (no extractable text) with clear 422s. Helper `app/api/pdf.py`. Web: the
+  Create-Job "Job description" step now has a **Paste text / Upload PDF** toggle with a
+  dropzone (`api.addVersionFromPdf`). Tests: `test_jd_pdf.py` (5).
+- **Claude Haiku LLM:** `app/integrations/llm/anthropic_provider.py` (`AnthropicLLMProvider`)
+  uses Claude (`claude-haiku-4-5`) for JD extraction when `PLATFORM_LLM_API_KEY` is set;
+  otherwise the deterministic stub. Registry selects it; any API/parse error falls back to the
+  stub so the flow never breaks. `.env`: `PLATFORM_LLM_API_KEY` (Anthropic sk-ant-… key) +
+  `PLATFORM_LLM_MODEL` (default claude-haiku-4-5). Deps added: `pypdf`, `python-multipart`,
+  `anthropic`. Tests: `test_llm_anthropic.py` (5, network-free via monkeypatch).
 
 ## Signup + dashboard shell — done this session
 

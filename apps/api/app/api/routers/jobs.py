@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, get_principal
 from app.api.errors import DomainError
+from app.api.pdf import PdfExtractionError, extract_pdf_text
 from app.api.schemas import (
     JobCreateIn,
     JobOut,
@@ -58,6 +59,41 @@ def get_job(job_id: UUID, session: Session = Depends(get_session), principal: Pr
 def add_job_version(job_id: UUID, body: JobVersionIn, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
     job = _job_or_404(session, principal, job_id)
     return JobService(session, principal.user_id).add_job_version(job, body.jd_text)
+
+
+MAX_PDF_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+@router.post("/{job_id}/versions/upload", response_model=JobVersionOut, status_code=201)
+async def add_job_version_from_pdf(
+    job_id: UUID,
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+):
+    """Create a JD version from an uploaded PDF: extract its text, then run the same
+    extraction path as pasting. Scanned/image-only PDFs (no extractable text) are rejected
+    with a clear message so the recruiter can paste instead."""
+    job = _job_or_404(session, principal, job_id)
+    is_pdf = file.content_type == "application/pdf" or (file.filename or "").lower().endswith(".pdf")
+    if not is_pdf:
+        raise DomainError("Only PDF files are supported.", code="validation_error", status_code=422)
+    data = await file.read(MAX_PDF_BYTES + 1)
+    if len(data) > MAX_PDF_BYTES:
+        raise DomainError("PDF is too large (max 10 MB).", code="validation_error", status_code=422)
+    if not data:
+        raise DomainError("The uploaded file is empty.", code="validation_error", status_code=422)
+    try:
+        text = extract_pdf_text(data)
+    except PdfExtractionError:
+        raise DomainError("Could not read this PDF. Please upload a valid PDF or paste the JD.", code="validation_error", status_code=422)
+    if not text:
+        raise DomainError(
+            "No text could be extracted (the PDF may be scanned images). Please paste the JD instead.",
+            code="validation_error",
+            status_code=422,
+        )
+    return JobService(session, principal.user_id).add_job_version(job, text)
 
 
 @router.post("/{job_id}/versions/{version_id}/confirm", response_model=JobVersionOut)

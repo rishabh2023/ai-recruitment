@@ -75,6 +75,21 @@ export const api = {
     req<Job>("/jobs", { method: "POST", body: JSON.stringify({ title }) }),
   addVersion: (jobId: string, jd_text: string) =>
     req<JobVersion>(`/jobs/${jobId}/versions`, { method: "POST", body: JSON.stringify({ jd_text }) }),
+  addVersionFromPdf: async (jobId: string, file: File): Promise<JobVersion> => {
+    // multipart: let the browser set the Content-Type (with boundary), so don't use req().
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${BASE}/jobs/${jobId}/versions/upload`, {
+      method: "POST",
+      body: form,
+      credentials: "include",
+      cache: "no-store",
+    });
+    const text = await res.text();
+    const body = text ? JSON.parse(text) : null;
+    if (!res.ok) throw new Error(body?.error?.message ?? res.statusText);
+    return body as JobVersion;
+  },
   confirmVersion: (jobId: string, vid: string) =>
     req<JobVersion>(`/jobs/${jobId}/versions/${vid}/confirm`, { method: "POST" }),
   draftWorkflow: (jobId: string) =>

@@ -19,6 +19,8 @@ export default function CreateJob() {
 
   const [jd, setJd] = useState("");
   const [version, setVersion] = useState<JobVersion | null>(null);
+  const [jdMode, setJdMode] = useState<"paste" | "upload">("paste");
+  const [pdfName, setPdfName] = useState<string | null>(null);
 
   const [workflow, setWorkflow] = useState<WorkflowVersion | null>(null);
   const [stages, setStages] = useState<Stage[]>([]);
@@ -67,13 +69,60 @@ export default function CreateJob() {
           <h3>2. Job description</h3>
           {!version ? (
             <>
-              <label>Paste the JD</label>
-              <textarea rows={6} value={jd} onChange={(e) => setJd(e.target.value)} />
-              <div style={{ marginTop: 10 }}>
-                <button disabled={busy || !jd} onClick={() => run(async () => setVersion(await api.addVersion(job.id, jd)))}>
-                  Extract details
+              <div className="tabs" style={{ maxWidth: 280, marginBottom: 12 }} role="tablist">
+                <button
+                  role="tab"
+                  aria-selected={jdMode === "paste"}
+                  className={`tab ${jdMode === "paste" ? "active" : ""}`}
+                  onClick={() => setJdMode("paste")}
+                >
+                  Paste text
+                </button>
+                <button
+                  role="tab"
+                  aria-selected={jdMode === "upload"}
+                  className={`tab ${jdMode === "upload" ? "active" : ""}`}
+                  onClick={() => setJdMode("upload")}
+                >
+                  Upload PDF
                 </button>
               </div>
+
+              {jdMode === "paste" ? (
+                <>
+                  <label>Paste the JD</label>
+                  <textarea rows={6} value={jd} onChange={(e) => setJd(e.target.value)} placeholder="Paste the full job description…" />
+                  <div style={{ marginTop: 10 }}>
+                    <button disabled={busy || !jd.trim()} onClick={() => run(async () => setVersion(await api.addVersion(job.id, jd)))}>
+                      {busy ? "Extracting…" : "Extract details"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <label htmlFor="jd-pdf">Upload a JD (PDF, max 10 MB)</label>
+                  <label className="filedrop" htmlFor="jd-pdf">
+                    <input
+                      id="jd-pdf"
+                      type="file"
+                      accept="application/pdf,.pdf"
+                      style={{ display: "none" }}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        setPdfName(f.name);
+                        run(async () => setVersion(await api.addVersionFromPdf(job.id, f)));
+                      }}
+                    />
+                    <span className="fileicon">⬆</span>
+                    <span>{busy ? "Extracting from PDF…" : pdfName ? pdfName : "Click to choose a PDF, or drop it here"}</span>
+                  </label>
+                  <p className="muted" style={{ fontSize: 13 }}>
+                    We extract the text and pull out role details. Scanned/image-only PDFs won&apos;t
+                    work — paste the text instead.
+                  </p>
+                </>
+              )}
             </>
           ) : (
             <>
