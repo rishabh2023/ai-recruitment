@@ -26,13 +26,17 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def _set_session_cookie(response: Response, token: str) -> None:
+    samesite = (settings.session_cookie_samesite or "lax").lower()
+    # SameSite=None (needed when the frontend is on a different site than the API) is only
+    # honored by browsers when the cookie is also Secure — force it so cross-site login works.
+    secure = settings.session_cookie_secure or samesite == "none"
     response.set_cookie(
         key=settings.session_cookie_name,
         value=token,
         max_age=settings.session_ttl_hours * 3600,
         httponly=True,
-        secure=settings.session_cookie_secure,
-        samesite="lax",
+        secure=secure,
+        samesite=samesite,
         path="/",
     )
 
@@ -73,7 +77,11 @@ def logout(
     session_cookie: str | None = Cookie(default=None, alias=settings.session_cookie_name),
 ) -> Response:
     revoke_session(session, session_cookie)
-    response.delete_cookie(key=settings.session_cookie_name, path="/")
+    _samesite = (settings.session_cookie_samesite or "lax").lower()
+    response.delete_cookie(
+        key=settings.session_cookie_name, path="/",
+        secure=settings.session_cookie_secure or _samesite == "none", samesite=_samesite,
+    )
     response.status_code = 204
     return response
 

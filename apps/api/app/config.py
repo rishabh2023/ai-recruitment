@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # left False so the cookie works over plain-HTTP localhost during development.
     session_cookie_name: str = "session"
     session_cookie_secure: bool = False
+    # "lax" for same-site (local, or frontend on a bolora.in subdomain); set "none" when the
+    # frontend is on a different site (e.g. *.amplifyapp.com → hapi.bolora.in) so the browser
+    # sends the cookie on cross-site requests. "none" is auto-forced Secure.
+    session_cookie_samesite: str = "lax"
     session_ttl_hours: int = 12
 
     # People search (Flow B). Multi-provider by design (ADR-0001): apollo, pdl, proxycurl,
