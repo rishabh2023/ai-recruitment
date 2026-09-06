@@ -1,0 +1,46 @@
+name: Deploy API
+
+# Redeploys the FastAPI backend to the EC2 host on every push to main that touches
+# the API, the compose file, or this workflow. Also runnable on demand from the
+# Actions tab (workflow_dispatch).
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   EC2_HOST     public host/IP of the server   (e.g. 43.204.193.232)
+#   EC2_USER     ssh user                        (ubuntu)
+#   EC2_SSH_KEY  PRIVATE half of the CI deploy keypair (whole file, incl. header/footer)
+#
+# The matching PUBLIC key must be in the server's ~/.ssh/authorized_keys.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/api/**"
+      - "compose.yaml"
+      - "scripts/deploy.sh"
+      - ".github/workflows/deploy-api.yml"
+  workflow_dispatch:
+
+# Never let two deploys race; queue them instead.
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 20m
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd /home/ubuntu/ai-recruitment
+            git fetch --prune origin
+            git reset --hard origin/main
+            bash scripts/deploy.sh
