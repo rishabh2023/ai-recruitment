@@ -97,6 +97,11 @@ export const api = {
   listStages: (jobId: string, vid: string) =>
     req<Stage[]>(`/jobs/${jobId}/workflow/versions/${vid}/stages`),
   getJobWorkflow: (jobId: string) => req<JobWorkflow>(`/jobs/${jobId}/workflow`),
+  editWorkflowStages: (jobId: string, versionId: string, stages: StageEdit[]) =>
+    req<JobWorkflow>(`/jobs/${jobId}/workflow/versions/${versionId}/stages`, {
+      method: "PUT",
+      body: JSON.stringify({ stages }),
+    }),
   approveWorkflow: (jobId: string, vid: string) =>
     req<WorkflowVersion>(`/jobs/${jobId}/workflow/versions/${vid}/approve`, { method: "POST" }),
   activateJob: (jobId: string) => req<Job>(`/jobs/${jobId}/activate`, { method: "POST" }),
@@ -145,6 +150,14 @@ export type JobWorkflow = {
   version: number;
   approved: boolean;
   stages: StageDetail[];
+};
+export type StageEdit = {
+  name: string;
+  purpose?: string | null;
+  execution_type: string;
+  information_requirements: string[];
+  requires_human_approval: boolean;
+  criteria: Criterion[];
 };
 
 export type CandidateSummary = {

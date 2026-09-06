@@ -20,6 +20,7 @@ from app.api.schemas import (
     JobWorkflowOut,
     StageDetailOut,
     StageOut,
+    WorkflowStagesIn,
     WorkflowVersionOut,
 )
 from app.db.session import get_session
@@ -32,7 +33,36 @@ from app.modules.workflows.models import (
     JobWorkflowVersion,
     StageCriteria,
 )
-from app.modules.workflows.service import WorkflowService
+from app.modules.workflows.service import WorkflowEditError, WorkflowService
+
+_EXEC_TYPES = {"ai", "human", "system"}
+_CRITERION_KINDS = {"numeric", "rule"}
+
+
+def _workflow_out(session: Session, version: JobWorkflowVersion) -> JobWorkflowOut:
+    stages = session.scalars(
+        select(JobWorkflowStage)
+        .where(JobWorkflowStage.job_workflow_version_id == version.id)
+        .order_by(JobWorkflowStage.stage_order.asc())
+    ).all()
+    out = []
+    for s in stages:
+        crits = session.scalars(
+            select(StageCriteria).where(StageCriteria.job_workflow_stage_id == s.id)
+        ).all()
+        out.append(
+            StageDetailOut(
+                id=s.id, stage_order=s.stage_order, name=s.name, purpose=s.purpose,
+                execution_type=s.execution_type,
+                information_requirements=list(s.information_requirements or []),
+                requires_human_approval=s.requires_human_approval,
+                criteria=[
+                    CriterionOut(name=c.name, kind=c.kind, weight=float(c.weight) if c.weight is not None else None)
+                    for c in crits
+                ],
+            )
+        )
+    return JobWorkflowOut(version_id=version.id, version=version.version, approved=version.approved, stages=out)
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -79,31 +109,36 @@ def get_job_workflow(job_id: UUID, session: Session = Depends(get_session), prin
     ).first()
     if version is None:
         raise DomainError("No workflow version yet.", code="not_found", status_code=404)
-    stages = session.scalars(
-        select(JobWorkflowStage)
-        .where(JobWorkflowStage.job_workflow_version_id == version.id)
-        .order_by(JobWorkflowStage.stage_order.asc())
-    ).all()
-    stage_out = []
-    for s in stages:
-        crits = session.scalars(
-            select(StageCriteria).where(StageCriteria.job_workflow_stage_id == s.id)
-        ).all()
-        stage_out.append(
-            StageDetailOut(
-                id=s.id, stage_order=s.stage_order, name=s.name, purpose=s.purpose,
-                execution_type=s.execution_type,
-                information_requirements=list(s.information_requirements or []),
-                requires_human_approval=s.requires_human_approval,
-                criteria=[
-                    CriterionOut(name=c.name, kind=c.kind, weight=float(c.weight) if c.weight is not None else None)
-                    for c in crits
-                ],
-            )
+    return _workflow_out(session, version)
+
+
+@router.put("/{job_id}/workflow/versions/{version_id}/stages", response_model=JobWorkflowOut)
+def edit_workflow_stages(
+    job_id: UUID, version_id: UUID, body: WorkflowStagesIn,
+    session: Session = Depends(get_session), principal: Principal = Depends(get_principal),
+):
+    """Replace the stages + criteria of an unapproved workflow version (review/customize)."""
+    job = _job_or_404(session, principal, job_id)
+    version = session.get(JobWorkflowVersion, version_id)
+    if version is None or session.get(JobWorkflow, version.job_workflow_id).job_id != job.id:
+        raise DomainError("Workflow version not found.", code="not_found", status_code=404)
+    if not body.stages:
+        raise DomainError("A workflow needs at least one stage.", code="validation_error", status_code=422)
+    for s in body.stages:
+        if s.execution_type not in _EXEC_TYPES:
+            raise DomainError(f"Invalid execution_type '{s.execution_type}'.", code="validation_error", status_code=422)
+        if not s.name.strip():
+            raise DomainError("Every stage needs a name.", code="validation_error", status_code=422)
+        for c in s.criteria:
+            if c.kind not in _CRITERION_KINDS:
+                raise DomainError(f"Invalid criterion kind '{c.kind}'.", code="validation_error", status_code=422)
+    try:
+        WorkflowService(session, principal.user_id).replace_stages(
+            version, [s.model_dump() for s in body.stages]
         )
-    return JobWorkflowOut(
-        version_id=version.id, version=version.version, approved=version.approved, stages=stage_out
-    )
+    except WorkflowEditError as exc:
+        raise DomainError(str(exc), code="conflict", status_code=409)
+    return _workflow_out(session, version)
 
 
 @router.post("/{job_id}/versions", response_model=JobVersionOut, status_code=201)

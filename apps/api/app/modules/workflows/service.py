@@ -28,6 +28,10 @@ from .models import (
 )
 
 
+class WorkflowEditError(Exception):
+    """Raised when an edit to a workflow version is not allowed (e.g. it is approved)."""
+
+
 class WorkflowService:
     def __init__(
         self,
@@ -122,6 +126,46 @@ class WorkflowService:
             self._s, org_id=job.org_id, actor_user_id=self._actor,
             action="workflow.adopted_template", entity_type="job_workflow_version",
             entity_id=version.id, meta={"template_version_id": str(template_version.id)},
+        )
+        return version
+
+    def replace_stages(self, version: JobWorkflowVersion, stages: list[dict]) -> JobWorkflowVersion:
+        """Replace all stages + criteria of an UNAPPROVED version (recruiter review/customize).
+
+        Stage order is normalized to the given sequence. Raises WorkflowEditError if the version
+        is already approved (edits to an approved workflow require a new version)."""
+        if version.approved:
+            raise WorkflowEditError("This workflow is approved; edits require a new version.")
+        for existing in self._s.scalars(
+            select(JobWorkflowStage).where(JobWorkflowStage.job_workflow_version_id == version.id)
+        ).all():
+            self._s.delete(existing)  # criteria cascade via FK ON DELETE CASCADE
+        self._s.flush()
+        for i, sd in enumerate(stages, start=1):
+            stage = JobWorkflowStage(
+                job_workflow_version_id=version.id,
+                stage_order=i,
+                name=sd["name"],
+                purpose=sd.get("purpose"),
+                execution_type=sd["execution_type"],
+                information_requirements=list(sd.get("information_requirements") or []),
+                requires_human_approval=bool(sd.get("requires_human_approval", False)),
+            )
+            self._s.add(stage)
+            self._s.flush()
+            for c in sd.get("criteria") or []:
+                self._s.add(
+                    StageCriteria(
+                        job_workflow_stage_id=stage.id,
+                        name=c["name"], kind=c.get("kind", "numeric"), weight=c.get("weight"),
+                    )
+                )
+        self._s.flush()
+        job = self._s.get(Job, self._job_id_for_version(version))
+        write_audit(
+            self._s, org_id=job.org_id, actor_user_id=self._actor,
+            action="workflow.stages_edited", entity_type="job_workflow_version",
+            entity_id=version.id, meta={"stage_count": len(stages)},
         )
         return version
 

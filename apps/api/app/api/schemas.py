@@ -124,6 +124,25 @@ class JobWorkflowOut(BaseModel):
     stages: list[StageDetailOut]
 
 
+class CriterionIn(BaseModel):
+    name: str
+    kind: str = "numeric"  # 'numeric' | 'rule'
+    weight: float | None = None
+
+
+class StageEditIn(BaseModel):
+    name: str
+    purpose: str | None = None
+    execution_type: str  # 'ai' | 'human' | 'system'
+    information_requirements: list[str] = []
+    requires_human_approval: bool = False
+    criteria: list[CriterionIn] = []
+
+
+class WorkflowStagesIn(BaseModel):
+    stages: list[StageEditIn]
+
+
 # --- candidates ---
 class CandidateImportIn(BaseModel):
     full_name: str

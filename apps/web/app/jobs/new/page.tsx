@@ -6,9 +6,10 @@ import {
   api,
   type Job,
   type JobVersion,
-  type Stage,
+  type JobWorkflow,
   type WorkflowVersion,
 } from "@/lib/api";
+import WorkflowEditor from "@/components/WorkflowEditor";
 
 export default function CreateJob() {
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +24,7 @@ export default function CreateJob() {
   const [pdfName, setPdfName] = useState<string | null>(null);
 
   const [workflow, setWorkflow] = useState<WorkflowVersion | null>(null);
-  const [stages, setStages] = useState<Stage[]>([]);
+  const [wfDetail, setWfDetail] = useState<JobWorkflow | null>(null);
 
   async function run(fn: () => Promise<void>) {
     setBusy(true);
@@ -151,7 +152,7 @@ export default function CreateJob() {
                 run(async () => {
                   const wf = await api.draftWorkflow(job!.id);
                   setWorkflow(wf);
-                  setStages(await api.listStages(job!.id, wf.id));
+                  setWfDetail(await api.getJobWorkflow(job!.id));
                 })
               }
             >
@@ -159,16 +160,23 @@ export default function CreateJob() {
             </button>
           ) : (
             <>
-              <p className="muted">Review the drafted stages, then approve:</p>
-              {stages.map((s) => (
-                <div className="card" key={s.id}>
-                  <b>{s.stage_order}. {s.name}</b> <span className="badge">{s.execution_type}</span>
-                </div>
-              ))}
               {!workflow.approved ? (
-                <button disabled={busy} onClick={() => run(async () => setWorkflow(await api.approveWorkflow(job!.id, workflow.id)))}>
-                  Approve workflow
-                </button>
+                <>
+                  <p className="muted">Review and customize the drafted stages, then approve:</p>
+                  {wfDetail && (
+                    <WorkflowEditor
+                      jobId={job!.id}
+                      versionId={wfDetail.version_id}
+                      initial={wfDetail}
+                      onSaved={setWfDetail}
+                    />
+                  )}
+                  <div style={{ marginTop: 12 }}>
+                    <button disabled={busy} onClick={() => run(async () => setWorkflow(await api.approveWorkflow(job!.id, workflow.id)))}>
+                      Approve workflow
+                    </button>
+                  </div>
+                </>
               ) : (
                 <p className="muted">✓ Approved</p>
               )}

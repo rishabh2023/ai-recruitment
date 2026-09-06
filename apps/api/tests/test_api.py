@@ -44,6 +44,35 @@ def test_unauthorized_without_cookie(client):
     assert r.json()["error"]["code"] == "unauthorized"
 
 
+def test_edit_workflow_stages(client):
+    h = _auth(client)
+    jid = client.post("/jobs", json={"title": "Data Scientist"}, headers=h).json()["id"]
+    ver = client.post(f"/jobs/{jid}/versions", json={"jd_text": "Data Scientist\nPython, ML"}, headers=h).json()
+    client.post(f"/jobs/{jid}/versions/{ver['id']}/confirm", headers=h)
+    wf = client.post(f"/jobs/{jid}/workflow/draft", headers=h).json()
+
+    # customize: replace with two stages
+    payload = {"stages": [
+        {"name": "Phone Screen", "execution_type": "ai", "information_requirements": ["interest", "notice_period"],
+         "criteria": [{"name": "Communication", "kind": "numeric", "weight": 100}]},
+        {"name": "Final Review", "execution_type": "human", "requires_human_approval": True},
+    ]}
+    r = client.put(f"/jobs/{jid}/workflow/versions/{wf['id']}/stages", json=payload, headers=h)
+    assert r.status_code == 200, r.text
+    stages = r.json()["stages"]
+    assert [s["name"] for s in stages] == ["Phone Screen", "Final Review"]
+    assert stages[0]["stage_order"] == 1 and stages[0]["criteria"][0]["weight"] == 100
+    assert stages[1]["requires_human_approval"] is True
+
+    # invalid execution type rejected
+    bad = {"stages": [{"name": "X", "execution_type": "robot"}]}
+    assert client.put(f"/jobs/{jid}/workflow/versions/{wf['id']}/stages", json=bad, headers=h).status_code == 422
+
+    # once approved, editing is blocked
+    client.post(f"/jobs/{jid}/workflow/versions/{wf['id']}/approve", headers=h)
+    assert client.put(f"/jobs/{jid}/workflow/versions/{wf['id']}/stages", json=payload, headers=h).status_code == 409
+
+
 def test_full_flow(client):
     h = _auth(client)
 
