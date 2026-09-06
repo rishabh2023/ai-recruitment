@@ -102,6 +102,10 @@ def test_full_flow(client):
     r2 = client.post("/webhooks/hunar", json=event)
     assert r2.json()["duplicate"] is True  # idempotent
 
+    # recruiter decision: candidate is NEEDS_REVIEW after the result → advance to next stage
+    dec = client.post(f"/job-candidates/{jc_id}/decision", json={"outcome": "pass"}, headers=h).json()
+    assert dec["advanced"] is True and dec["current_stage_name"]
+
     tl = client.get(f"/job-candidates/{jc_id}/timeline", headers=h).json()
     assert tl["candidate"]["full_name"] == "Asha"
     assert tl["stage_runs"][0]["stage_name"]  # resolved stage name

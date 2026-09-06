@@ -65,6 +65,28 @@ export default function CandidateDetailPage() {
     }
   }
 
+  const [deciding, setDeciding] = useState(false);
+  async function decide(outcome: "pass" | "reject") {
+    setLaunchError(null);
+    setLaunchNote(null);
+    setDeciding(true);
+    try {
+      const r = await api.decide(jcId, outcome);
+      setLaunchNote(
+        outcome === "pass"
+          ? r.advanced
+            ? `Advanced to ${r.current_stage_name}.`
+            : "Passed — pipeline complete."
+          : "Candidate rejected.",
+      );
+      await load();
+    } catch (e) {
+      setLaunchError((e as Error).message);
+    } finally {
+      setDeciding(false);
+    }
+  }
+
   if (loading) return <main className="container">Loading…</main>;
   if (error)
     return (
@@ -80,6 +102,7 @@ export default function CandidateDetailPage() {
   const latestRun = tl.stage_runs[tl.stage_runs.length - 1];
   const isRetry = !!latestRun && RETRYABLE.has(latestRun.status);
   const canLaunch = !!latestRun && (LAUNCHABLE.has(latestRun.status) || isRetry);
+  const needsReview = !!latestRun && latestRun.status === "NEEDS_REVIEW";
 
   return (
     <main className="container">
@@ -105,6 +128,26 @@ export default function CandidateDetailPage() {
         <p className="muted" style={{ fontSize: 13 }}>
           The last attempt didn&apos;t connect (candidate didn&apos;t answer). Use <b>Retry call</b> to try again.
         </p>
+      )}
+      {needsReview && (
+        <div className="card" style={{ borderColor: "var(--warn)" }}>
+          <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+            <div>
+              <b>Awaiting your decision</b>
+              <div className="muted" style={{ fontSize: 13 }}>
+                Review the evidence below, then advance or reject.
+              </div>
+            </div>
+            <div className="row" style={{ gap: 8 }}>
+              <button disabled={deciding} onClick={() => decide("pass")}>
+                {deciding ? "…" : "Advance to next stage"}
+              </button>
+              <button className="secondary" disabled={deciding} onClick={() => decide("reject")}>
+                Reject
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {launchNote && <p className="ok">{launchNote}</p>}
       {launchError && (

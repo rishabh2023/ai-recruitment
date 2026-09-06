@@ -113,6 +113,11 @@ export const api = {
       `/job-candidates/${jcId}/launch`,
       { method: "POST" },
     ),
+  decide: (jcId: string, outcome: "pass" | "reject", reason?: string) =>
+    req<{ outcome: string; advanced: boolean; pipeline_state: string | null; current_stage_name: string | null }>(
+      `/job-candidates/${jcId}/decision`,
+      { method: "POST", body: JSON.stringify({ outcome, reason }) },
+    ),
   syncCall: (callId: string) =>
     req<{ call_id: string; normalized_status: string | null; vendor_status: string | null; hunar_call_id: string | null }>(
       `/calls/${callId}/sync`,

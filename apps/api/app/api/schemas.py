@@ -143,6 +143,20 @@ class JobCandidateOut(ORMModel):
     pipeline_state: str | None
 
 
+class DecisionIn(BaseModel):
+    outcome: str  # "pass" | "reject"
+    reason: str | None = None
+
+
+class DecisionOut(BaseModel):
+    job_candidate_id: UUID
+    outcome: str
+    pipeline_state: str | None
+    current_stage_id: UUID | None
+    current_stage_name: str | None
+    advanced: bool
+
+
 class CandidateSummary(BaseModel):
     """Candidate identity fields recruiters see (never Hunar/telephony internals)."""
 

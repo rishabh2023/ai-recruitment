@@ -13,6 +13,8 @@ from app.api.errors import DomainError
 from app.api.schemas import (
     CandidateImportIn,
     CandidateSummary,
+    DecisionIn,
+    DecisionOut,
     JobCandidateListItem,
     JobCandidateOut,
     TimelineOut,
@@ -23,6 +25,7 @@ from app.modules.candidates.service import CandidateService
 from app.modules.interviews.models import Call
 from app.modules.jobs.models import Job
 from app.modules.workflows.models import JobWorkflowStage
+from app.workflow_execution import StageOutcome, StageRunState, WorkflowExecutionService
 
 router = APIRouter(tags=["candidates"])
 
@@ -95,6 +98,49 @@ def list_candidates(job_id: UUID, session: Session = Depends(get_session), princ
             )
         )
     return items
+
+
+@router.post("/job-candidates/{jc_id}/decision", response_model=DecisionOut, status_code=201)
+def decide(jc_id: UUID, body: DecisionIn, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
+    """Recruiter decision on a candidate awaiting review: advance (pass) or reject.
+
+    Operates on the current stage's run, which must be in NEEDS_REVIEW. PASS advances the
+    candidate to the next stage (or completes the pipeline); REJECT stops them. Audited."""
+    jc = _jc_or_404(session, principal, jc_id)
+    outcome_map = {"pass": StageOutcome.PASS, "reject": StageOutcome.REJECT}
+    outcome = outcome_map.get(body.outcome.lower())
+    if outcome is None:
+        raise DomainError("outcome must be 'pass' or 'reject'.", code="validation_error", status_code=422)
+    if jc.current_stage_id is None:
+        raise DomainError("Candidate has no current stage.", code="conflict", status_code=409)
+    run = session.scalars(
+        select(CandidateStageRun)
+        .where(
+            CandidateStageRun.job_candidate_id == jc.id,
+            CandidateStageRun.job_workflow_stage_id == jc.current_stage_id,
+        )
+        .order_by(CandidateStageRun.created_at.desc())
+        .limit(1)
+    ).first()
+    if run is None or run.status != StageRunState.NEEDS_REVIEW.value:
+        raise DomainError(
+            "Candidate is not awaiting a decision (current stage run must be NEEDS_REVIEW).",
+            code="conflict", status_code=409,
+        )
+    next_run = WorkflowExecutionService(session, principal.user_id).complete_with_outcome(
+        run, outcome, reason=body.reason
+    )
+    session.flush()
+    session.refresh(jc)
+    next_stage = session.get(JobWorkflowStage, jc.current_stage_id) if jc.current_stage_id else None
+    return DecisionOut(
+        job_candidate_id=jc.id,
+        outcome=body.outcome.lower(),
+        pipeline_state=jc.pipeline_state,
+        current_stage_id=jc.current_stage_id,
+        current_stage_name=next_stage.name if next_stage else None,
+        advanced=next_run is not None,
+    )
 
 
 @router.get("/job-candidates/{jc_id}/timeline", response_model=TimelineOut)
