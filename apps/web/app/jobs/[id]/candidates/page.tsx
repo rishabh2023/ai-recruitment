@@ -19,6 +19,7 @@ export default function JobCandidatesPage() {
   const [candidates, setCandidates] = useState<JobCandidateListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<"candidates" | "import">("candidates");
 
   // import form
   const [showForm, setShowForm] = useState(false);
@@ -89,30 +90,28 @@ export default function JobCandidatesPage() {
   if (loading) return <main className="container">Loading…</main>;
 
   return (
-    <main className="container">
-      <div className="header">
+    <main className="container candidates-workspace">
+      <div className="candidates-header">
         <div>
-          <Link href="/">← Dashboard</Link>
+          <Link className="back-link" href={`/jobs/${jobId}`}>← Job workspace</Link>
+          <p className="eyebrow">Candidate operations</p>
           <h1 style={{ marginTop: 8 }}>{job ? job.title : "Candidates"}</h1>
           {job && (
             <span className={`badge ${job.status}`}>{job.status}</span>
           )}
         </div>
-        <button onClick={() => setShowForm((s) => !s)}>{showForm ? "Cancel" : "+ Import candidate"}</button>
+        <button onClick={() => { setTab("import"); setShowForm(true); }}>{showForm ? "Continue import" : "+ Import candidate"}</button>
       </div>
 
       {error && <p className="error">{error}</p>}
 
-      {job && job.status !== "active" && (
-        <div className="card muted">
-          This job is <b>{job.status}</b>. You can import candidates, but AI stages can only run
-          once the job is active (JD confirmed and a workflow approved).
-        </div>
-      )}
+      <div className="candidate-summary"><div><span>Total candidates</span><strong>{candidates.length}</strong></div><div><span>Ready to launch</span><strong>{job?.status === "active" ? candidates.length : 0}</strong></div><div><span>Workflow state</span><strong>{job?.status === "active" ? "Live" : "Draft"}</strong></div></div>
+      <nav className="workspace-tabs" aria-label="Candidate workspace"><button className={tab === "candidates" ? "active" : ""} onClick={() => setTab("candidates")}>Candidates <span>{candidates.length}</span></button><button className={tab === "import" ? "active" : ""} onClick={() => { setTab("import"); setShowForm(true); }}>Import</button></nav>
+      {job && job.status !== "active" && <div className="candidate-notice"><div><strong>Candidate import is available</strong><p>AI stages remain protected until the job description and workflow are approved, then the role is activated.</p></div><Link href={`/jobs/${jobId}`}>Review workflow →</Link></div>}
 
-      {showForm && (
-        <div className="card" style={{ display: "grid", gap: 8 }}>
-          <h3 style={{ margin: 0 }}>Import candidate</h3>
+      {tab === "import" && showForm && (
+        <div className="candidate-import-card">
+          <div><p className="eyebrow">Add to this role</p><h2>Import a candidate</h2><p className="muted">Known facts become starting context for the hiring workflow.</p></div>
           {formError && <p className="error">{formError}</p>}
           <label>
             Full name *
@@ -170,13 +169,11 @@ export default function JobCandidatesPage() {
         </div>
       )}
 
-      {candidates.length === 0 ? (
-        <div className="card muted">
-          No candidates yet. Import your first candidate to start the hiring journey.
-        </div>
+      {tab === "candidates" && (candidates.length === 0 ? (
+        <div className="candidate-empty"><div><p className="eyebrow">Build your pipeline</p><h2>No candidates yet</h2><p>Import existing candidates now. Their profile and hiring journey will live here as the role progresses.</p><button onClick={() => { setTab("import"); setShowForm(true); }}>Import first candidate</button></div><div className="candidate-empty-steps"><span>01&nbsp; Import profile</span><span>02&nbsp; Review workflow</span><span>03&nbsp; Launch when active</span></div></div>
       ) : (
-        candidates.map((c) => (
-          <Link className="card cardlink" key={c.id} href={`/job-candidates/${c.id}`}>
+        <div className="candidate-list">{candidates.map((c) => (
+          <Link className="candidate-row" key={c.id} href={`/job-candidates/${c.id}`}>
             <div className="row" style={{ justifyContent: "space-between" }}>
               <div>
                 <div style={{ fontWeight: 600 }}>{c.candidate.full_name ?? "(unnamed)"}</div>
@@ -193,8 +190,8 @@ export default function JobCandidatesPage() {
               </div>
             </div>
           </Link>
-        ))
-      )}
+        ))}</div>
+      ))}
     </main>
   );
 }

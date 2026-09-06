@@ -21,6 +21,15 @@ matches the assignment's deliverable shape (deployed app + repo).
   interviews / webhooks / system, plus `/dev/bootstrap` and `/health`.
 - Next.js App Router console: dashboard (connect, list jobs) + guided job-creation flow
   (create → confirm JD → draft → approve → activate) + typed API client.
+- Job hub calling-policy UI and its authenticated API: recruiters can set the verified Hunar
+  calling window, retry policy, and agent-language preference; dispatch uses the supported
+  guardrails/retry fields.
+- Create-job workflow UI refresh: the existing create → extract → confirm → draft → edit →
+  approve → activate flow is presented as a responsive four-step wizard with purpose-built
+  workflow-stage cards. The state transitions and API contract are unchanged.
+- Job workspace refresh: `/jobs/{id}` groups overview, workflow, pipeline, and calling-policy
+  work into tabs. Draft workflows can be reopened, edited, saved, and approved in place;
+  approved versions stay read-only and jobs still use the existing activation gate.
 
 **Out of scope**
 
@@ -39,8 +48,12 @@ matches the assignment's deliverable shape (deployed app + repo).
 
 ## Evidence
 
-`apps/api/tests/test_api.py` (TestClient e2e) — full suite **41 passed**. Web:
-`✓ Compiled successfully`, 3 routes prerendered; typecheck clean (2026-09-06).
+`apps/api/tests/test_api.py` and `test_hunar_dispatch.py` cover policy validation, persistence,
+and payload mapping; full suite **78 passed**. Web: `npm run typecheck` and `npm run build`
+pass; the production page was browser-verified through create account → create job → save
+calling policy (2026-09-06). The refreshed create-job screen was browser-verified through
+create job → extract/confirm details → draft workflow on desktop and a 360px-wide viewport
+(2026-09-06); `npm run typecheck` and `npm run build` pass.
 
 ## Remaining limitations / open questions
 

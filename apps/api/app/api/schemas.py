@@ -143,6 +143,20 @@ class WorkflowStagesIn(BaseModel):
     stages: list[StageEditIn]
 
 
+class CallingPolicyIn(BaseModel):
+    allowed_days: list[str] = []  # MON..SUN
+    earliest_call_time: str | None = None  # "HH:MM"
+    last_call_time: str | None = None  # "HH:MM"
+    timezone: str | None = None  # IANA, e.g. Asia/Kolkata
+    max_attempts: int = 3
+    retry_interval_hours: int = 6
+    language: str | None = None  # ENGLISH, HINDI, ... (Hunar agent-level)
+
+
+class CallingPolicyOut(CallingPolicyIn):
+    id: UUID
+
+
 # --- candidates ---
 class CandidateImportIn(BaseModel):
     full_name: str
@@ -220,3 +234,57 @@ class TimelineOut(BaseModel):
 class WebhookAck(BaseModel):
     status: str
     duplicate: bool
+
+
+# --- sourcing (people search & outreach — Flow B) ---
+class PeopleSearchIn(BaseModel):
+    titles: list[str] = []
+    keywords: list[str] = []
+    locations: list[str] = []
+    skills: list[str] = []
+    seniorities: list[str] = []
+    page: int = 1
+    page_size: int = 25
+
+
+class ExternalCandidateOut(BaseModel):
+    source: str
+    source_id: str
+    full_name: str | None
+    title: str | None
+    company: str | None
+    location: str | None
+    linkedin_url: str | None
+    has_contact: bool  # whether contact details exist without enrichment (search rarely does)
+
+
+class PeopleSearchOut(BaseModel):
+    provider: str  # provider that produced these results
+    requested_provider: str  # provider the platform is configured to use
+    is_sample: bool  # True when these are sample profiles, not live data
+    notice: str | None  # shown to the recruiter when the result is degraded/sample
+    total: int | None
+    page: int
+    has_more: bool
+    suggested_query: PeopleSearchIn  # the JD-derived query used (echoed for the UI)
+    candidates: list[ExternalCandidateOut]
+
+
+class SourceCandidateIn(BaseModel):
+    source: str
+    source_id: str
+    full_name: str
+    title: str | None = None
+    company: str | None = None
+    location: str | None = None
+    linkedin_url: str | None = None
+
+
+class SourceCandidatesIn(BaseModel):
+    candidates: list[SourceCandidateIn]
+
+
+class SourceCandidatesOut(BaseModel):
+    added: int
+    skipped: int  # duplicates or invalid rows not added
+    job_candidate_ids: list[UUID]

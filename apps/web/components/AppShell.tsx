@@ -11,7 +11,7 @@ type NavItem = { href: string; label: string; icon: string; match: (p: string) =
 const NAV: NavItem[] = [
   { href: "/", label: "Dashboard", icon: "▤", match: (p) => p === "/" },
   { href: "/jobs", label: "Jobs", icon: "▦", match: (p) => p.startsWith("/jobs") || p.startsWith("/job-candidates") },
-  { href: "#", label: "Sourcing", icon: "◎", match: () => false, disabled: true },
+  { href: "/sourcing", label: "Sourcing", icon: "◎", match: (p) => p.startsWith("/sourcing") },
   { href: "#", label: "Settings", icon: "⚙", match: () => false, disabled: true },
 ];
 

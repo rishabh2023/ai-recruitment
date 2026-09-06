@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = False
     session_ttl_hours: int = 12
 
+    # People search (Flow B). Multi-provider by design (ADR-0001). `sample` is an offline,
+    # no-key provider used to keep sourcing demonstrable while a paid Apollo key is
+    # unavailable; set to `apollo` (with APOLLO_API_KEY) once a plan with Search access exists.
+    # When a real provider is configured but unreachable/plan-gated, SourcingService falls back
+    # to the sample provider and clearly flags the results as sample data.
+    people_search_provider: str = "sample"
+    apollo_api_key: str = ""
+
     # Platform LLM (product intelligence only: JD understanding, role classification, draft
     # workflow/rubric generation). When a key is set, JD extraction uses Claude; otherwise the
     # deterministic offline stub is used so the flow works and tests stay stable.

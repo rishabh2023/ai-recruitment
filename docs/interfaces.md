@@ -14,6 +14,7 @@ boundaries, webhooks, and background jobs.
   POST   /jobs/{id}/extract                 POST   /jobs/{id}/workflow/resolve
   POST   /jobs/{id}/workflow/generate       PUT    /jobs/{id}/workflow
   POST   /jobs/{id}/rubric/generate         PUT    /jobs/{id}/rubric
+  GET/PUT /jobs/{id}/calling-policy
   POST   /jobs/{id}/approve
   POST   /jobs/{id}/candidates              POST   /jobs/{id}/candidates/import
   POST   /jobs/{id}/people-search           POST   /jobs/{id}/outreach
@@ -27,6 +28,19 @@ boundaries, webhooks, and background jobs.
   before work is enqueued.
 - Write endpoints that trigger external work return quickly after validating and persisting
   intent; the actual work is a background job.
+
+### Calling policy
+
+`GET` and `PUT /jobs/{id}/calling-policy` expose the job-scoped policy used for Hunar
+dispatch. The persisted values are allowed days, an IANA timezone, start/end times, maximum
+attempts, retry interval, and a preferred future agent language. A saved policy must contain a
+complete guardrail; the API rejects missing boundaries/timezone, fewer than three distinct days,
+or a window under three hours. Retry intervals are limited to
+the verified Hunar set (0, 3, 6, 9, 12, 24 hours), total attempts to 1–10, and language to Hunar's
+verified languages. Dispatch maps the window to Hunar `guardrails` and attempts to
+`retry_config` (`max_retry_count = max_attempts - 1`). Policy changes are audited. Hunar
+language is agent-level, so the preference is not a per-call override and does not update an
+existing agent yet.
 
 ## Authentication and authorization
 

@@ -87,6 +87,26 @@ def test_dispatch_registers_webhook_callbacks_when_public_url_set(session, monke
     assert cb["call_summary_callback_url"] == url
 
 
+def test_dispatch_applies_calling_policy(session):
+    from datetime import time
+
+    from app.modules.workflows.models import CallingPolicy
+
+    org, user, jc, stage, run, call = _setup(session)
+    session.add(CallingPolicy(
+        org_id=org.id, job_id=jc.job_id, allowed_days=["MON", "TUE", "WED"],
+        earliest_call_time=time(9, 0), last_call_time=time(18, 0), timezone="Asia/Kolkata",
+        max_attempts=3, retry_interval_hours=6,
+    ))
+    session.flush()
+    fake = FakeHunar()
+    HunarDispatchService(session, client=fake, actor_user_id=user.id).dispatch(call.id)
+    p = fake.last_payload
+    assert p["guardrails"]["allowed_days"] == ["MON", "TUE", "WED"]
+    assert p["guardrails"]["earliest_call_time"] == "09:00"
+    assert p["retry_config"] == {"max_retry_count": 2, "retry_interval_hours": 6}
+
+
 def test_dispatch_omits_callbacks_when_no_public_url(session):
     org, user, jc, stage, run, call = _setup(session)
     fake = FakeHunar()

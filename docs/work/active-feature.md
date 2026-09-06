@@ -12,6 +12,37 @@ This file is the resume point for any agent. Keep it current.
 - **Status:** Phases 0–3 + auth + candidate/timeline UI + dashboard + JD PDF + Claude LLM
   done. **66 API/py tests pass**; web builds + typechecks. Verified in-browser end to end.
 
+## Sourcing — People Search & Outreach (Flow B), done this session
+
+- **Backend:** new `app/modules/sourcing/` (`SourcingService`) + router
+  `app/api/routers/sourcing.py`, exposing per-job endpoints:
+  `GET /jobs/{id}/sourcing/suggested-query` (JD-derived starting query — title/location/
+  skills/seniority from the latest extracted JD), `POST /jobs/{id}/sourcing/search`, and
+  `POST /jobs/{id}/sourcing/add` (add selected external candidates to the pipeline as
+  SOURCED, deduped by (source, source_id) within the job, reusing `CandidateService`).
+- **Provider strategy (Apollo 403 handled):** Apollo Search is plan-gated (403 on the Free
+  plan), so a new **offline `sample` provider** (`app/integrations/people_search/sample.py`)
+  returns deterministic, clearly-labelled sample profiles so Flow B is demonstrable without a
+  paid key. `SourcingService.search` uses the configured provider (`PEOPLE_SEARCH_PROVIDER`,
+  default `sample`) and, if a real provider is unreachable/plan-gated/unconfigured, **falls
+  back to sample and flags `is_sample=true` with a plain notice** — never silently. Config:
+  `people_search_provider`, `apollo_api_key` added to `app/config.py`. Registry now knows the
+  `sample` (no-key) provider.
+- **Frontend:** Sourcing nav item enabled; new `/sourcing` page (`apps/web/app/sourcing/`).
+  Role picker (JD-prefilled filters), comma-separated title/location/seniority/skills/keyword
+  filters, results with select-all + per-row checkboxes, "Add N to pipeline", sample-data
+  banner, empty/loading/error/pager states. Sourced search results have no contact details
+  ("contact via enrichment" — mirrors real providers; enrichment is Phase 4). `lib/api.ts`
+  gains `suggestedQuery`/`peopleSearch`/`addSourced` + types.
+- **Verification:** `tests/test_sourcing.py` (5) — suggested query, sample search+filtering,
+  Apollo-requested→sample fallback (monkeypatched, network-free), add + dedup, empty-selection
+  422. **Full suite 83 passed.** Web typecheck + production build pass. Browser-verified end
+  to end on localhost:3000: login → Sourcing → JD-prefill → search (sample notice) → empty
+  state → broaden → 9 results → select all → "7 added · 2 skipped (already in pipeline)".
+- **Not built (next):** contact enrichment (Apollo `/people/match` async webhook) + outreach
+  call launch for SOURCED candidates (Phase 4); live Apollo once a paid/scoped key exists
+  (flip `PEOPLE_SEARCH_PROVIDER=apollo` + `APOLLO_API_KEY`).
+
 ## Job hub — workflow + pipeline UI (done this session)
 
 - `GET /jobs/{id}/workflow` returns the effective workflow (approved else latest draft) with
@@ -22,6 +53,42 @@ This file is the resume point for any agent. Keep it current.
 - Still POC-ish / next for "full product": in-UI stage & criteria **editing** (currently the
   draft is auto-generated then read-only), calling-window/language config UI, and
   decision/approval actions on NEEDS_REVIEW candidates (advance/reject with audited outcome).
+
+## Calling policy — done this session
+
+- `GET/PUT /jobs/{id}/calling-policy` persists the job's allowed days, calling window, IANA
+  timezone, attempts, retry interval, and preferred Hunar-agent language. It validates the
+  verified Hunar constraints (a complete guardrail: timezone, start/end, at least three days,
+  at least a three-hour window; supported retry intervals/languages; 1–10 total attempts).
+  It audits each save, and `HunarDispatchService` maps the policy into `guardrails` and
+  `retry_config` when making a live call.
+- The job hub renders a saved calling-policy card. It explicitly says that language is
+  agent-level and is only a stored preference pending a future agent-configuration update; it
+  is not a per-call override. Browser verified through signup → job creation → save policy;
+  the workflow 404 was intentionally rendered as the empty-workflow state. Full test suite:
+  **78 passed**; web typecheck and production build pass.
+- Local demo caveat: the full test suite truncates the dev DB. It removed the prefilled demo
+  user in this session; restored via `POST /dev/bootstrap` with
+  `recruiter@demo.test` / `demo-password`.
+
+## Create-job workflow UI refresh — done this session
+
+- `/jobs/new` now presents the original server-backed create → extract → confirm → draft →
+  edit → approve → activate journey as a four-step, responsive hiring-workflow wizard. It has
+  visible progress/status states, constrained content cards, extraction-review context, and a
+  clear approval/activation handoff; no job or workflow API/state transition changed.
+- `WorkflowEditor` now uses labelled, responsive stage cards with execution type, purpose,
+  collected information, human-approval guidance, weighted criteria, and accessible stage
+  reorder controls. Native select controls receive the same dark field treatment as inputs.
+- Verified after the change: `npm run typecheck`, `npm run build`, and browser flow through
+  job creation, JD confirmation, and workflow drafting, including a 360px-wide visual check.
+
+## Job workspace UI refresh — done this session
+
+- `/jobs/{id}` is now an operational workspace with Overview, Workflow, Pipeline, and Calling
+  policy tabs. A recruiter can reopen an unapproved draft, edit and save its stages, then
+  approve it; approved versions are clearly read-only and activation remains server-gated.
+- Browser verified the overview, tab navigation, draft editor, and a successful workflow save.
 
 ## JD PDF upload + Claude Haiku extraction — done this session
 
@@ -174,9 +241,10 @@ This file is the resume point for any agent. Keep it current.
 
 ## Exact next action
 
-Ask which to do next: (a) adopt shadcn/ui + per-role dashboard widgets,
-(b) Phase 4 people-search outreach (needs a working provider key), or (c) wire live Hunar via
-Celery (needs a provisioned number). Default: candidate/timeline UI.
+Ask which to do next: (a) implement the Sourcing and Settings product flows, (b) adopt
+shadcn/ui + per-role dashboard widgets, (c) Phase 4 people-search outreach (needs a working
+provider key), or (d) wire live Hunar via Celery (needs a provisioned number). Current changes
+are uncommitted on `main`; preserve the existing calling-policy work when integrating.
 
 ## How to run (demo)
 

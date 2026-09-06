@@ -1,46 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { api, type Job } from "@/lib/api";
 
 export default function JobsPage() {
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    api.listJobs().then(setJobs).catch((e) => setError(e.message)).finally(() => setLoading(false));
-  }, []);
-
-  if (loading) return <main className="container">Loading…</main>;
-
-  return (
-    <main className="container">
-      <div className="header">
-        <h1>Jobs</h1>
-        <Link className="btn" href="/jobs/new">+ Create Job</Link>
-      </div>
-
-      {error && <p className="error">{error}</p>}
-
-      {jobs.length === 0 ? (
-        <div className="card muted">
-          No jobs yet. <Link href="/jobs/new">Create your first job</Link>.
-        </div>
-      ) : (
-        jobs.map((j) => (
-          <Link className="card cardlink" key={j.id} href={`/jobs/${j.id}`}>
-            <div className="row" style={{ justifyContent: "space-between" }}>
-              <div>
-                <div style={{ fontWeight: 600 }}>{j.title}</div>
-                <div className="muted" style={{ fontSize: 13 }}>View workflow & pipeline →</div>
-              </div>
-              <span className={`badge ${j.status}`}>{j.status}</span>
-            </div>
-          </Link>
-        ))
-      )}
-    </main>
-  );
+  const [jobs, setJobs] = useState<Job[]>([]); const [query, setQuery] = useState(""); const [filter, setFilter] = useState("all"); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null);
+  useEffect(() => { api.listJobs().then(setJobs).catch((e) => setError(e.message)).finally(() => setLoading(false)); }, []);
+  const shown = useMemo(() => jobs.filter((job) => (filter === "all" || job.status === filter) && job.title.toLowerCase().includes(query.toLowerCase())), [jobs, query, filter]);
+  if (loading) return <main className="container">Loading jobs…</main>;
+  const active = jobs.filter((job) => job.status === "active").length;
+  return <main className="container jobs-page"><header className="jobs-header"><div><p className="eyebrow">Hiring portfolio</p><h1>Jobs</h1><p>Keep every role, workflow, and candidate pipeline moving from one place.</p></div><Link className="btn" href="/jobs/new">+ Create job</Link></header>{error && <p className="error">{error}</p>}<section className="jobs-metrics"><div><span>Total roles</span><strong>{jobs.length}</strong></div><div><span>Active roles</span><strong>{active}</strong></div><div><span>Drafts to review</span><strong>{jobs.length - active}</strong></div></section><section className="jobs-toolbar"><label><span className="sr-only">Search jobs</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search roles…" /></label><div className="jobs-filters" aria-label="Job status filter">{["all", "draft", "active"].map((status) => <button key={status} className={filter === status ? "active" : ""} onClick={() => setFilter(status)}>{status === "all" ? "All roles" : status}</button>)}</div></section>{jobs.length === 0 ? <div className="workspace-empty">No jobs yet. <Link href="/jobs/new">Create your first job</Link> to begin.</div> : shown.length === 0 ? <div className="workspace-empty">No roles match this view. Clear the search or filter to see your jobs.</div> : <section className="job-list" aria-label="Jobs">{shown.map((job) => <Link className="job-list-card" key={job.id} href={`/jobs/${job.id}`}><div className="job-list-icon">{job.title.slice(0, 1).toUpperCase()}</div><div className="job-list-main"><h2>{job.title}</h2><p>{job.status === "active" ? "Active hiring workspace" : "Draft workflow ready for review"} · Created {new Date(job.created_at).toLocaleDateString()}</p></div><div className="job-list-action"><span className={`badge ${job.status}`}>{job.status}</span><span>{job.status === "active" ? "Open workspace →" : "Review draft →"}</span></div></Link>)}</section>}</main>;
 }

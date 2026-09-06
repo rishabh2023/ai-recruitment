@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, UploadFile
@@ -12,6 +14,8 @@ from app.api.deps import Principal, get_principal
 from app.api.errors import DomainError
 from app.api.pdf import PdfExtractionError, extract_pdf_text
 from app.api.schemas import (
+    CallingPolicyIn,
+    CallingPolicyOut,
     CriterionOut,
     JobCreateIn,
     JobOut,
@@ -25,9 +29,11 @@ from app.api.schemas import (
 )
 from app.db.session import get_session
 from app.integrations.llm import ExtractedJob
+from app.modules.audit.log import write_audit
 from app.modules.jobs.models import Job, JobVersion
 from app.modules.jobs.service import JobActivationError, JobService
 from app.modules.workflows.models import (
+    CallingPolicy,
     JobWorkflow,
     JobWorkflowStage,
     JobWorkflowVersion,
@@ -139,6 +145,87 @@ def edit_workflow_stages(
     except WorkflowEditError as exc:
         raise DomainError(str(exc), code="conflict", status_code=409)
     return _workflow_out(session, version)
+
+
+_DAYS = {"MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"}
+_RETRY_INTERVALS = {0, 3, 6, 9, 12, 24}
+_LANGUAGES = {"ENGLISH", "HINDI", "TAMIL", "TELUGU", "KANNADA", "MARATHI", "MALAYALAM", "GUJARATI", "BENGALI", "TURKISH", "ARABIC", "SPANISH"}
+
+
+def _parse_hhmm(s: str | None):
+    if not s:
+        return None
+    try:
+        hh, mm = s.split(":")
+        from datetime import time as _t
+        return _t(int(hh), int(mm))
+    except (ValueError, TypeError):
+        raise DomainError(f"Invalid time '{s}' (use HH:MM).", code="validation_error", status_code=422)
+
+
+def _policy_out(p: CallingPolicy) -> CallingPolicyOut:
+    return CallingPolicyOut(
+        id=p.id, allowed_days=list(p.allowed_days or []),
+        earliest_call_time=p.earliest_call_time.strftime("%H:%M") if p.earliest_call_time else None,
+        last_call_time=p.last_call_time.strftime("%H:%M") if p.last_call_time else None,
+        timezone=p.timezone, max_attempts=p.max_attempts,
+        retry_interval_hours=p.retry_interval_hours, language=p.language,
+    )
+
+
+@router.get("/{job_id}/calling-policy", response_model=CallingPolicyOut | None)
+def get_calling_policy(job_id: UUID, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
+    _job_or_404(session, principal, job_id)
+    p = session.scalars(select(CallingPolicy).where(CallingPolicy.job_id == job_id)).first()
+    return _policy_out(p) if p else None
+
+
+@router.put("/{job_id}/calling-policy", response_model=CallingPolicyOut)
+def set_calling_policy(job_id: UUID, body: CallingPolicyIn, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
+    """Upsert the job's calling window / retry / language policy (Hunar guardrails)."""
+    job = _job_or_404(session, principal, job_id)
+    days = [d.upper() for d in body.allowed_days]
+    if any(d not in _DAYS for d in days):
+        raise DomainError("allowed_days must be MON..SUN.", code="validation_error", status_code=422)
+    if len(set(days)) < 3:
+        raise DomainError("Hunar requires at least 3 distinct calling days.", code="validation_error", status_code=422)
+    earliest, last = _parse_hhmm(body.earliest_call_time), _parse_hhmm(body.last_call_time)
+    if not earliest or not last or not body.timezone:
+        raise DomainError("Calling policy needs a start time, end time, and IANA timezone.", code="validation_error", status_code=422)
+    span = (last.hour * 60 + last.minute) - (earliest.hour * 60 + earliest.minute)
+    if span < 180:
+        raise DomainError("Calling window must be at least 3 hours.", code="validation_error", status_code=422)
+    if body.retry_interval_hours not in _RETRY_INTERVALS:
+        raise DomainError("retry_interval_hours must be one of 0,3,6,9,12,24.", code="validation_error", status_code=422)
+    if not (1 <= body.max_attempts <= 10):
+        raise DomainError("max_attempts must be 1..10.", code="validation_error", status_code=422)
+    if body.timezone:
+        try:
+            ZoneInfo(body.timezone)
+        except ZoneInfoNotFoundError:
+            raise DomainError("timezone must be a valid IANA timezone.", code="validation_error", status_code=422)
+    if body.language and body.language not in _LANGUAGES:
+        raise DomainError("language is not supported by Hunar.", code="validation_error", status_code=422)
+
+    p = session.scalars(select(CallingPolicy).where(CallingPolicy.job_id == job_id)).first()
+    if p is None:
+        p = CallingPolicy(org_id=job.org_id, job_id=job_id)
+        session.add(p)
+    p.allowed_days = list(dict.fromkeys(days))
+    p.earliest_call_time = earliest
+    p.last_call_time = last
+    p.timezone = body.timezone
+    p.max_attempts = body.max_attempts
+    p.retry_interval_hours = body.retry_interval_hours
+    p.language = body.language
+    session.flush()
+    write_audit(
+        session, org_id=job.org_id, actor_user_id=principal.user_id,
+        action="calling_policy.saved", entity_type="calling_policy", entity_id=p.id,
+        meta={"job_id": str(job.id), "allowed_days": p.allowed_days, "max_attempts": p.max_attempts,
+              "retry_interval_hours": p.retry_interval_hours, "language": p.language},
+    )
+    return _policy_out(p)
 
 
 @router.post("/{job_id}/versions", response_model=JobVersionOut, status_code=201)

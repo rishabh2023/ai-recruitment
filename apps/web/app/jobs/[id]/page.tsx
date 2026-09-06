@@ -3,52 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import {
-  api,
-  type Job,
-  type JobCandidateListItem,
-  type JobWorkflow,
-  type StageDetail,
-} from "@/lib/api";
+import { api, type Job, type JobCandidateListItem, type JobWorkflow, type StageDetail } from "@/lib/api";
+import CallingPolicyCard from "@/components/CallingPolicyCard";
+import WorkflowEditor from "@/components/WorkflowEditor";
 
-const EXEC_LABEL: Record<string, string> = { ai: "AI call", human: "Human", system: "System" };
+const EXEC: Record<string, string> = { ai: "AI call", human: "Human review", system: "System" };
+type Tab = "overview" | "workflow" | "pipeline" | "policy";
 
 function StageCard({ stage }: { stage: StageDetail }) {
-  return (
-    <div className="stage-card">
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div style={{ fontWeight: 600 }}>
-          {stage.stage_order}. {stage.name}
-        </div>
-        <span className={`badge exec-${stage.execution_type}`}>{EXEC_LABEL[stage.execution_type] ?? stage.execution_type}</span>
-      </div>
-      {stage.purpose && <p className="muted" style={{ fontSize: 13, margin: "6px 0" }}>{stage.purpose}</p>}
-      {stage.information_requirements.length > 0 && (
-        <div style={{ margin: "8px 0" }}>
-          <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".04em" }}>Collects</div>
-          <div className="chips">
-            {stage.information_requirements.map((r) => (
-              <span className="chip" key={r}>{r}</span>
-            ))}
-          </div>
-        </div>
-      )}
-      {stage.criteria.length > 0 && (
-        <div style={{ margin: "8px 0" }}>
-          <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".04em" }}>Criteria</div>
-          {stage.criteria.map((c) => (
-            <div className="row" key={c.name} style={{ justifyContent: "space-between", fontSize: 13 }}>
-              <span>{c.name}</span>
-              <span className="muted">{c.weight != null ? `${c.weight}%` : c.kind}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {stage.requires_human_approval && (
-        <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>⚑ Requires human approval</div>
-      )}
-    </div>
-  );
+  return <article className="workspace-stage-card"><div className="workspace-stage-topline"><span className="stage-number">{String(stage.stage_order).padStart(2, "0")}</span><span className={`badge exec-${stage.execution_type}`}>{EXEC[stage.execution_type] ?? stage.execution_type}</span></div><h3>{stage.name}</h3><p>{stage.purpose || "No purpose has been described for this stage."}</p><div className="workspace-stage-foot"><span>{stage.criteria.length} criteria</span>{stage.requires_human_approval && <span>Human checkpoint</span>}</div></article>;
 }
 
 export default function JobDetailPage() {
@@ -56,126 +19,28 @@ export default function JobDetailPage() {
   const [job, setJob] = useState<Job | null>(null);
   const [workflow, setWorkflow] = useState<JobWorkflow | null>(null);
   const [candidates, setCandidates] = useState<JobCandidateListItem[]>([]);
+  const [tab, setTab] = useState<Tab>("overview");
+  const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const [j, cs] = await Promise.all([api.getJob(jobId), api.listCandidates(jobId)]);
-      setJob(j);
-      setCandidates(cs);
-      // Workflow may not exist yet (draft not created) — treat 404 as "none".
-      try {
-        setWorkflow(await api.getJobWorkflow(jobId));
-      } catch {
-        setWorkflow(null);
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [jobId]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  if (loading) return <main className="container">Loading…</main>;
-  if (error)
-    return (
-      <main className="container">
-        <Link href="/jobs">← Jobs</Link>
-        <p className="error">{error}</p>
-      </main>
-    );
-  if (!job) return null;
-
+  const load = useCallback(async () => { try { const [j, cs] = await Promise.all([api.getJob(jobId), api.listCandidates(jobId)]); setJob(j); setCandidates(cs); try { setWorkflow(await api.getJobWorkflow(jobId)); } catch { setWorkflow(null); } } catch (e) { setError((e as Error).message); } finally { setLoading(false); } }, [jobId]);
+  useEffect(() => { load(); }, [load]);
+  async function run(action: () => Promise<void>) { setBusy(true); setError(null); try { await action(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
+  if (loading) return <main className="container">Loading job workspace…</main>;
+  if (!job) return <main className="container"><Link href="/jobs">← Jobs</Link><p className="error">{error ?? "Job not found."}</p></main>;
   const stages = workflow?.stages ?? [];
-  const byStage = (stageId: string) => candidates.filter((c) => c.current_stage_id === stageId);
-  const unassigned = candidates.filter((c) => !c.current_stage_id || !stages.some((s) => s.id === c.current_stage_id));
-
-  return (
-    <main className="container">
-      <div className="header">
-        <div>
-          <Link href="/jobs">← Jobs</Link>
-          <h1 style={{ marginTop: 8, marginBottom: 6 }}>{job.title}</h1>
-          <span className={`badge ${job.status}`}>{job.status}</span>
-          {workflow && (
-            <span className="badge" style={{ marginLeft: 8 }}>
-              workflow v{workflow.version} {workflow.approved ? "· approved" : "· draft"}
-            </span>
-          )}
-        </div>
-        <Link className="btn" href={`/jobs/${jobId}/candidates`}>Manage candidates</Link>
-      </div>
-
-      {/* Workflow */}
-      <section>
-        <h3>Hiring workflow</h3>
-        {stages.length === 0 ? (
-          <div className="card muted">
-            No workflow yet. <Link href="/jobs/new">Create the job flow</Link> to draft and approve stages.
-          </div>
-        ) : (
-          <div className="stage-flow">
-            {stages.map((s, i) => (
-              <div className="stage-flow-item" key={s.id}>
-                <StageCard stage={s} />
-                {i < stages.length - 1 && <div className="stage-arrow">→</div>}
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Pipeline */}
-      <section>
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <h3>Pipeline</h3>
-          <Link href={`/jobs/${jobId}/candidates`} className="muted" style={{ fontSize: 13 }}>
-            {candidates.length} candidate{candidates.length === 1 ? "" : "s"} →
-          </Link>
-        </div>
-        {candidates.length === 0 ? (
-          <div className="card muted">
-            No candidates yet. <Link href={`/jobs/${jobId}/candidates`}>Import a candidate</Link> to start the pipeline.
-          </div>
-        ) : (
-          <div className="board">
-            {stages.map((s) => {
-              const col = byStage(s.id);
-              return (
-                <div className="board-col" key={s.id}>
-                  <div className="board-col-head">
-                    <span>{s.name}</span>
-                    <span className="count">{col.length}</span>
-                  </div>
-                  {col.map((c) => (
-                    <Link className="pcard" key={c.id} href={`/job-candidates/${c.id}`}>
-                      <div style={{ fontWeight: 600, fontSize: 14 }}>{c.candidate.full_name ?? "(unnamed)"}</div>
-                      {c.pipeline_state && <span className="badge" style={{ fontSize: 11 }}>{c.pipeline_state}</span>}
-                    </Link>
-                  ))}
-                  {col.length === 0 && <div className="muted" style={{ fontSize: 12, padding: "4px 2px" }}>—</div>}
-                </div>
-              );
-            })}
-            {unassigned.length > 0 && (
-              <div className="board-col" key="unassigned">
-                <div className="board-col-head"><span>Other</span><span className="count">{unassigned.length}</span></div>
-                {unassigned.map((c) => (
-                  <Link className="pcard" key={c.id} href={`/job-candidates/${c.id}`}>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{c.candidate.full_name ?? "(unnamed)"}</div>
-                    {c.pipeline_state && <span className="badge" style={{ fontSize: 11 }}>{c.pipeline_state}</span>}
-                  </Link>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </section>
-    </main>
-  );
+  const byStage = (id: string) => candidates.filter((candidate) => candidate.current_stage_id === id);
+  const tabs: Array<[Tab, string, number?]> = [["overview", "Overview"], ["workflow", "Workflow", stages.length], ["pipeline", "Pipeline", candidates.length], ["policy", "Calling policy"]];
+  const nextLabel = !workflow ? "Draft your hiring workflow" : !workflow.approved ? "Review and approve the draft" : job.status !== "active" ? "Activate this approved job" : "Your job is ready to hire";
+  const openDraft = () => { setTab("workflow"); setEditing(true); };
+  return <main className="container job-workspace">
+    <header className="job-workspace-header"><div><Link className="back-link" href="/jobs">← Jobs</Link><p className="eyebrow">Hiring workspace</p><h1>{job.title}</h1><div className="workspace-statuses"><span className={`badge ${job.status}`}>{job.status}</span><span className={`badge ${workflow?.approved ? "active" : "draft"}`}>{workflow ? `Workflow v${workflow.version} · ${workflow.approved ? "approved" : "draft"}` : "Workflow not drafted"}</span></div></div><div className="workspace-header-actions">{workflow && !workflow.approved && <button className="secondary" onClick={openDraft}>Edit draft</button>}{workflow?.approved && job.status !== "active" && <button disabled={busy} onClick={() => run(async () => setJob(await api.activateJob(jobId)))}>{busy ? "Activating…" : "Activate job"}</button>}<Link className="btn" href={`/jobs/${jobId}/candidates`}>Manage candidates</Link></div></header>
+    {error && <p className="error workspace-error">{error}</p>}
+    <nav className="workspace-tabs" aria-label="Job workspace">{tabs.map(([id, label, count]) => <button key={id} className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)}>{label}{count ? <span>{count}</span> : null}</button>)}</nav>
+    {tab === "overview" && <div className="workspace-overview"><section className="workspace-hero-card"><div><p className="eyebrow">Next action</p><h2>{nextLabel}</h2><p>{!workflow ? "Create the job workflow before candidates can enter the process." : !workflow.approved ? "Open the draft to adjust stages and criteria, then approve it when your team is aligned." : job.status !== "active" ? "The workflow is approved. Activate this role before adding candidates." : "Manage candidates, review activity, and keep the pipeline moving from one place."}</p></div>{!workflow ? <Link className="btn" href="/jobs/new">Open job setup</Link> : !workflow.approved ? <button onClick={openDraft}>Review draft</button> : job.status !== "active" ? <button disabled={busy} onClick={() => run(async () => setJob(await api.activateJob(jobId)))}>Activate job</button> : <Link className="btn" href={`/jobs/${jobId}/candidates`}>Add candidates</Link>}</section><section className="workspace-summary-grid"><div><span>Workflow</span><strong>{!workflow ? "Not drafted" : workflow.approved ? "Approved" : "Draft"}</strong><button className="linklike" onClick={() => setTab("workflow")}>View workflow</button></div><div><span>Candidates</span><strong>{candidates.length}</strong><button className="linklike" onClick={() => setTab("pipeline")}>Open pipeline</button></div><div><span>AI stages</span><strong>{stages.filter((stage) => stage.execution_type === "ai").length}</strong><button className="linklike" onClick={() => setTab("policy")}>Review policy</button></div></section><section className="workspace-section"><div className="workspace-section-heading"><div><p className="eyebrow">At a glance</p><h2>Workflow stages</h2></div><button className="linklike" onClick={() => setTab("workflow")}>Open workflow →</button></div>{stages.length ? <div className="workspace-stage-grid">{stages.map((stage) => <StageCard key={stage.id} stage={stage} />)}</div> : <div className="workspace-empty">No workflow exists yet. Start with job setup to draft one.</div>}</section></div>}
+    {tab === "workflow" && <section className="workspace-section"><div className="workspace-section-heading"><div><p className="eyebrow">Workflow configuration</p><h2>{editing ? "Edit workflow draft" : "Hiring workflow"}</h2><p>{workflow?.approved ? "This approved version is read-only to protect active candidate journeys." : editing ? "Save your changes before approving this version." : "Review the stages, criteria, and approval checkpoints for this role."}</p></div>{workflow && !workflow.approved && !editing && <button onClick={() => setEditing(true)}>Edit draft</button>}</div>{!workflow ? <div className="workspace-empty">No workflow has been drafted yet. <Link href="/jobs/new">Return to job setup</Link> to create one.</div> : editing && !workflow.approved ? <><WorkflowEditor jobId={jobId} versionId={workflow.version_id} initial={workflow} onSaved={setWorkflow} /><div className="workspace-approval-bar"><div><strong>Ready to lock this workflow?</strong><p>Once approved, this version cannot be edited. Create a new version for future changes.</p></div><button disabled={busy} onClick={() => run(async () => { await api.approveWorkflow(jobId, workflow.version_id); setWorkflow(await api.getJobWorkflow(jobId)); setEditing(false); })}>{busy ? "Approving…" : "Approve workflow"}</button></div></> : <><div className="workspace-stage-grid">{stages.map((stage) => <StageCard key={stage.id} stage={stage} />)}</div>{!workflow.approved && <button className="secondary workspace-edit-cta" onClick={() => setEditing(true)}>Edit this draft</button>}</>}</section>}
+    {tab === "pipeline" && <section className="workspace-section"><div className="workspace-section-heading"><div><p className="eyebrow">Candidate operations</p><h2>Pipeline</h2><p>Candidate movement reflects persisted workflow state, not drag-and-drop guesses.</p></div><Link className="btn" href={`/jobs/${jobId}/candidates`}>Manage candidates</Link></div>{candidates.length === 0 ? <div className="workspace-empty">No candidates yet. <Link href={`/jobs/${jobId}/candidates`}>Add or import candidates</Link> when this role is ready.</div> : <div className="board">{stages.map((stage) => <div className="board-col" key={stage.id}><div className="board-col-head"><span>{stage.name}</span><span className="count">{byStage(stage.id).length}</span></div>{byStage(stage.id).map((candidate) => <Link className="pcard" key={candidate.id} href={`/job-candidates/${candidate.id}`}><strong>{candidate.candidate.full_name ?? "(unnamed)"}</strong>{candidate.pipeline_state && <span className="badge">{candidate.pipeline_state}</span>}</Link>)}{byStage(stage.id).length === 0 && <div className="muted board-empty">No candidates</div>}</div>)}</div>}</section>}
+    {tab === "policy" && <section className="workspace-section policy-workspace"><div className="workspace-section-heading"><div><p className="eyebrow">Candidate contact controls</p><h2>Calling policy</h2><p>Set when AI calls may run and how unanswered calls are retried. Preferred language is a future agent preference; it does not change an existing call.</p></div></div><CallingPolicyCard jobId={jobId} /></section>}
+  </main>;
 }

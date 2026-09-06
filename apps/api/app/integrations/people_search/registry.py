@@ -11,9 +11,13 @@ import os
 
 from .apollo import ApolloProvider
 from .base import PeopleSearchProvider
+from .sample import SampleProvider
 
-# Known provider keys from the assignment. Value is the env var holding that provider's key.
-KNOWN_PROVIDERS: dict[str, str] = {
+# Known provider keys from the assignment. Value is the env var holding that provider's key
+# (None for providers that need no key). `sample` is an offline, no-key provider used as the
+# demonstrable fallback while a paid Apollo key is unavailable (see sample.py).
+KNOWN_PROVIDERS: dict[str, str | None] = {
+    "sample": None,
     "apollo": "APOLLO_API_KEY",
     "pdl": "PDL_API_KEY",
     "proxycurl": "PROXYCURL_API_KEY",
@@ -39,7 +43,10 @@ def get_people_search_provider(
             f"Known: {', '.join(sorted(KNOWN_PROVIDERS))}."
         )
 
-    api_key = env.get(KNOWN_PROVIDERS[key], "")
+    if key == "sample":
+        return SampleProvider()
+
+    api_key = env.get(KNOWN_PROVIDERS[key] or "", "")
 
     if key == "apollo":
         return ApolloProvider(api_key=api_key)

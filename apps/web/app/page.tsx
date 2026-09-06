@@ -54,9 +54,10 @@ export default function Dashboard() {
   if (loading) return <main className="container">Loading…</main>;
 
   return (
-    <main className="container">
-      <div className="header">
+    <main className="container dashboard-page">
+      <div className="dashboard-header">
         <div>
+          <p className="eyebrow">Hiring command center</p>
           <h1 style={{ marginBottom: 4 }}>
             {me?.name ? `Welcome, ${me.name.split(" ")[0]}` : "Hiring Dashboard"}
           </h1>
@@ -70,7 +71,7 @@ export default function Dashboard() {
       {error && <p className="error">{error}</p>}
 
       {summary && (
-        <div className="stat-grid">
+        <div className="stat-grid dashboard-stats">
           <Stat label="Active jobs" value={summary.active_jobs} />
           <Stat label="Candidates in pipeline" value={summary.candidates_in_pipeline} />
           <Stat label="Needs review" value={summary.needs_review} tone="warn" />
@@ -80,9 +81,20 @@ export default function Dashboard() {
         </div>
       )}
 
-      <section>
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <h3>Active jobs</h3>
+      <section className="dashboard-attention">
+        <div className="dashboard-section-heading">
+          <div><p className="eyebrow">Focus now</p><h2>Hiring attention</h2></div>
+        </div>
+        <div className="attention-grid">
+          <div><span>Draft workflows</span><strong>{jobs.filter((job) => job.status !== "active").length}</strong><p>Roles waiting for review or activation.</p><Link href="/jobs">Review drafts →</Link></div>
+          <div><span>Needs review</span><strong>{summary?.needs_review ?? 0}</strong><p>Candidate decisions waiting on your team.</p><Link href="/jobs">Open hiring workspaces →</Link></div>
+          <div><span>Failed calls</span><strong>{summary?.failed_calls ?? 0}</strong><p>Calls needing a retry or manual next step.</p><Link href="/jobs">Check pipeline →</Link></div>
+        </div>
+      </section>
+
+      <section className="dashboard-jobs">
+        <div className="dashboard-section-heading">
+          <div><p className="eyebrow">Role portfolio</p><h2>Jobs</h2></div>
           <Link href="/jobs" className="muted" style={{ fontSize: 13 }}>View all jobs →</Link>
         </div>
         {jobs.length === 0 ? (
@@ -90,19 +102,12 @@ export default function Dashboard() {
             No jobs yet. <Link href="/jobs/new">Create your first job</Link> to start hiring.
           </div>
         ) : (
-          jobs.slice(0, 5).map((j) => (
-            <Link className="card cardlink" key={j.id} href={`/jobs/${j.id}`}>
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <span style={{ fontWeight: 600 }}>{j.title}</span>
-                <span className={`badge ${j.status}`}>{j.status}</span>
-              </div>
-            </Link>
-          ))
+          <div className="dashboard-job-grid">{jobs.slice(0, 4).map((j) => <Link className="dashboard-job-card" key={j.id} href={`/jobs/${j.id}`}><span className="job-list-icon">{j.title.slice(0, 1)}</span><div><h3>{j.title}</h3><p>{j.status === "active" ? "Hiring is active" : "Draft needs review"}</p></div><span className={`badge ${j.status}`}>{j.status}</span><small>Open workspace →</small></Link>)}</div>
         )}
       </section>
 
-      <section>
-        <h3>Recent activity</h3>
+      <section className="dashboard-activity">
+        <div className="dashboard-section-heading"><div><p className="eyebrow">Audit trail</p><h2>Recent activity</h2></div></div>
         {activity.length === 0 ? (
           <div className="card muted">No activity yet.</div>
         ) : (

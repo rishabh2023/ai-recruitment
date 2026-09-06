@@ -87,50 +87,44 @@ export default function WorkflowEditor({
   }
 
   return (
-    <div>
+    <div className="workflow-editor">
       {error && <p className="error">{error}</p>}
       {stages.map((s, i) => (
-        <div className="card" key={i} style={{ display: "grid", gap: 8 }}>
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            <b>Stage {i + 1}</b>
-            <div className="row" style={{ gap: 6 }}>
-              <button className="linklike" onClick={() => move(i, -1)} disabled={i === 0}>↑</button>
-              <button className="linklike" onClick={() => move(i, 1)} disabled={i === stages.length - 1}>↓</button>
-              <button className="linklike" onClick={() => removeStage(i)}>remove</button>
+        <article className="workflow-stage" key={i}>
+          <div className="stage-toolbar">
+            <div className="stage-number">{String(i + 1).padStart(2, "0")}</div><div><p className="eyebrow">Workflow stage</p><h3>{s.name || "Untitled stage"}</h3></div>
+            <div className="stage-actions">
+              <button aria-label={`Move ${s.name || "stage"} up`} className="icon-button" onClick={() => move(i, -1)} disabled={i === 0}>↑</button>
+              <button aria-label={`Move ${s.name || "stage"} down`} className="icon-button" onClick={() => move(i, 1)} disabled={i === stages.length - 1}>↓</button>
+              <button className="text-danger" onClick={() => removeStage(i)}>Remove</button>
             </div>
           </div>
-          <div className="row" style={{ gap: 8 }}>
-            <input style={{ flex: 2 }} value={s.name} onChange={(e) => update(i, { name: e.target.value })} placeholder="Stage name" />
-            <select style={{ flex: 1 }} value={s.execution_type} onChange={(e) => update(i, { execution_type: e.target.value })}>
+          <div className="stage-main-fields">
+            <label>Stage name<input value={s.name} onChange={(e) => update(i, { name: e.target.value })} placeholder="Stage name" /></label>
+            <label>Execution type<select value={s.execution_type} onChange={(e) => update(i, { execution_type: e.target.value })}>
               {EXEC.map((x) => <option key={x} value={x}>{x}</option>)}
-            </select>
+            </select></label>
           </div>
-          <input value={s.purpose ?? ""} onChange={(e) => update(i, { purpose: e.target.value })} placeholder="Purpose (optional)" />
-          <input
-            value={s.information_requirements.join(", ")}
-            onChange={(e) => update(i, { information_requirements: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })}
-            placeholder="Collects (comma-separated, e.g. interest, notice_period)"
-          />
-          <label className="row" style={{ gap: 6, margin: 0 }}>
-            <input type="checkbox" style={{ width: "auto" }} checked={s.requires_human_approval}
+          <label>Purpose<input value={s.purpose ?? ""} onChange={(e) => update(i, { purpose: e.target.value })} placeholder="What should this stage establish?" /></label>
+          <label>Information to collect<span className="field-hint">Separate fields with commas</span><input value={s.information_requirements.join(", ")} onChange={(e) => update(i, { information_requirements: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} placeholder="e.g. interest, notice period, location" /></label>
+          <label className="approval-toggle">
+            <input type="checkbox" checked={s.requires_human_approval}
               onChange={(e) => update(i, { requires_human_approval: e.target.checked })} />
-            Requires human approval
+            <span><strong>Requires human approval</strong><small>Stop automatic progression until a recruiter reviews the result.</small></span>
           </label>
-          <div>
-            <div className="muted" style={{ fontSize: 12 }}>Criteria</div>
+          <div className="criteria-section">
+            <div className="criteria-heading"><div><h4>Success criteria</h4><p>Use weighted criteria to make evaluations consistent.</p></div><button className="secondary compact-button" onClick={() => update(i, { criteria: [...s.criteria, { name: "", kind: "numeric", weight: null }] })}>+ Add criterion</button></div>
             {s.criteria.map((c, ci) => (
-              <div className="row" key={ci} style={{ gap: 6, marginTop: 4 }}>
-                <input style={{ flex: 2 }} value={c.name} onChange={(e) => updateCriterion(i, ci, { name: e.target.value })} placeholder="Criterion" />
-                <input style={{ flex: 1 }} type="number" value={c.weight ?? ""} onChange={(e) => updateCriterion(i, ci, { weight: e.target.value === "" ? null : Number(e.target.value) })} placeholder="weight %" />
+              <div className="criterion-row" key={ci}>
+                <input aria-label={`Criterion ${ci + 1} name`} value={c.name} onChange={(e) => updateCriterion(i, ci, { name: e.target.value })} placeholder="Criterion name" />
+                <label className="weight-field"><span>Weight</span><input type="number" min="0" max="100" value={c.weight ?? ""} onChange={(e) => updateCriterion(i, ci, { weight: e.target.value === "" ? null : Number(e.target.value) })} placeholder="%" /></label>
               </div>
             ))}
-            <button className="linklike" onClick={() => update(i, { criteria: [...s.criteria, { name: "", kind: "numeric", weight: null }] })}>+ add criterion</button>
           </div>
-        </div>
+        </article>
       ))}
-      <div className="row" style={{ gap: 8, marginTop: 8 }}>
-        <button className="secondary" onClick={addStage}>+ Add stage</button>
-        <button onClick={save} disabled={busy || stages.length === 0}>{busy ? "Saving…" : "Save changes"}</button>
+      <div className="workflow-editor-actions">
+        <button className="secondary" onClick={addStage}>+ Add stage</button><div className="row"><span className="muted">{stages.length} stage{stages.length === 1 ? "" : "s"}</span><button onClick={save} disabled={busy || stages.length === 0}>{busy ? "Saving…" : "Save workflow changes"}</button></div>
         {saved && <span className="ok" style={{ fontSize: 13 }}>Saved ✓</span>}
       </div>
     </div>

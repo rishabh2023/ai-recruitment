@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import select, text
+from sqlalchemy.orm import Session
 
 from app.db.session import engine
 from app.main import app
+from app.modules.audit.models import AuditEvent
 
 
 @pytest.fixture
@@ -71,6 +73,38 @@ def test_edit_workflow_stages(client):
     # once approved, editing is blocked
     client.post(f"/jobs/{jid}/workflow/versions/{wf['id']}/approve", headers=h)
     assert client.put(f"/jobs/{jid}/workflow/versions/{wf['id']}/stages", json=payload, headers=h).status_code == 409
+
+
+def test_calling_policy_upsert_and_validation(client):
+    h = _auth(client)
+    jid = client.post("/jobs", json={"title": "Support Rep"}, headers=h).json()["id"]
+    assert client.get(f"/jobs/{jid}/calling-policy", headers=h).json() is None
+
+    good = {"allowed_days": ["MON", "TUE", "WED"], "earliest_call_time": "09:00",
+            "last_call_time": "18:00", "timezone": "Asia/Kolkata", "max_attempts": 3,
+            "retry_interval_hours": 6, "language": "ENGLISH"}
+    r = client.put(f"/jobs/{jid}/calling-policy", json=good, headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["earliest_call_time"] == "09:00" and r.json()["timezone"] == "Asia/Kolkata"
+    # persisted
+    assert client.get(f"/jobs/{jid}/calling-policy", headers=h).json()["language"] == "ENGLISH"
+
+    # < 3 days rejected
+    assert client.put(f"/jobs/{jid}/calling-policy", json={**good, "allowed_days": ["MON", "TUE"]}, headers=h).status_code == 422
+    # A saved policy must be complete; silently omitting a partial policy would allow unrestricted calls.
+    assert client.put(f"/jobs/{jid}/calling-policy", json={**good, "allowed_days": []}, headers=h).status_code == 422
+    assert client.put(f"/jobs/{jid}/calling-policy", json={**good, "earliest_call_time": None}, headers=h).status_code == 422
+    # < 3h window rejected
+    assert client.put(f"/jobs/{jid}/calling-policy", json={**good, "last_call_time": "10:00"}, headers=h).status_code == 422
+    # bad retry interval rejected
+    assert client.put(f"/jobs/{jid}/calling-policy", json={**good, "retry_interval_hours": 5}, headers=h).status_code == 422
+    # Hunar accepts IANA timezones and a fixed set of agent languages only.
+    assert client.put(f"/jobs/{jid}/calling-policy", json={**good, "timezone": "India/Delhi"}, headers=h).status_code == 422
+    assert client.put(f"/jobs/{jid}/calling-policy", json={**good, "language": "KLINGON"}, headers=h).status_code == 422
+    # An initial call is always placed, so zero total attempts is not a meaningful policy.
+    assert client.put(f"/jobs/{jid}/calling-policy", json={**good, "max_attempts": 0}, headers=h).status_code == 422
+    with Session(engine) as session:
+        assert session.scalar(select(AuditEvent).where(AuditEvent.action == "calling_policy.saved")) is not None
 
 
 def test_full_flow(client):

@@ -26,7 +26,7 @@ from app.modules.audit.log import write_audit
 from app.modules.candidates.models import Candidate, CandidateFact, CandidateStageRun, JobCandidate
 from app.modules.jobs.models import Job
 from app.modules.organizations.models import Organization
-from app.modules.workflows.models import HunarAgentConfig, JobWorkflowStage
+from app.modules.workflows.models import CallingPolicy, HunarAgentConfig, JobWorkflowStage
 from app.workflow_execution import WorkflowExecutionService, compute_effective_information
 
 from .models import Call, CallAttempt
@@ -66,6 +66,7 @@ class HunarDispatchService:
             raise HunarDispatchError("No Hunar agent configured (set HUNAR_DEFAULT_AGENT_ID or a stage agent).")
 
         custom_data = self._build_custom_data(agent_id, candidate, job, org, stage, jc)
+        guardrails, retry_config, timezone = self._calling_policy(job.id)
         payload = build_call_request(
             agent_id=agent_id,
             callee_name=candidate.full_name or "Candidate",
@@ -73,6 +74,9 @@ class HunarDispatchService:
             request_id=call.request_id,
             custom_data=custom_data,
             callback_config=self._callback_config(),
+            guardrails=guardrails,
+            retry_config=retry_config,
+            timezone=timezone,
         )
         try:
             resp = self._client.create_call(payload)
@@ -92,6 +96,24 @@ class HunarDispatchService:
         )
         self._s.flush()
         return call
+
+    def _calling_policy(self, job_id):
+        """Map the job's CallingPolicy → Hunar (guardrails, retry_config, timezone). Guardrails
+        are only sent when complete (Hunar requires ≥3 days + a start/end window), else omitted."""
+        p = self._s.scalars(select(CallingPolicy).where(CallingPolicy.job_id == job_id)).first()
+        if p is None:
+            return None, None, None
+        guardrails = None
+        if p.allowed_days and p.earliest_call_time and p.last_call_time:
+            guardrails = {
+                "allowed_days": list(p.allowed_days),
+                "earliest_call_time": p.earliest_call_time.strftime("%H:%M"),
+                "last_call_time": p.last_call_time.strftime("%H:%M"),
+            }
+            if p.timezone:
+                guardrails["timezone"] = p.timezone
+        retry_config = {"max_retry_count": max(0, p.max_attempts - 1), "retry_interval_hours": p.retry_interval_hours}
+        return guardrails, retry_config, p.timezone
 
     def _callback_config(self) -> dict[str, str] | None:
         """Register all Hunar event callbacks at our webhook endpoint so status/result/

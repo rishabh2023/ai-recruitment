@@ -97,6 +97,9 @@ export const api = {
   listStages: (jobId: string, vid: string) =>
     req<Stage[]>(`/jobs/${jobId}/workflow/versions/${vid}/stages`),
   getJobWorkflow: (jobId: string) => req<JobWorkflow>(`/jobs/${jobId}/workflow`),
+  getCallingPolicy: (jobId: string) => req<CallingPolicy | null>(`/jobs/${jobId}/calling-policy`),
+  setCallingPolicy: (jobId: string, policy: CallingPolicyInput) =>
+    req<CallingPolicy>(`/jobs/${jobId}/calling-policy`, { method: "PUT", body: JSON.stringify(policy) }),
   editWorkflowStages: (jobId: string, versionId: string, stages: StageEdit[]) =>
     req<JobWorkflow>(`/jobs/${jobId}/workflow/versions/${versionId}/stages`, {
       method: "PUT",
@@ -123,6 +126,20 @@ export const api = {
       `/job-candidates/${jcId}/decision`,
       { method: "POST", body: JSON.stringify({ outcome, reason }) },
     ),
+  // sourcing (people search & outreach — Flow B)
+  suggestedQuery: (jobId: string) =>
+    req<PeopleSearchInput>(`/jobs/${jobId}/sourcing/suggested-query`),
+  peopleSearch: (jobId: string, query: PeopleSearchInput) =>
+    req<PeopleSearchResult>(`/jobs/${jobId}/sourcing/search`, {
+      method: "POST",
+      body: JSON.stringify(query),
+    }),
+  addSourced: (jobId: string, candidates: ExternalCandidate[]) =>
+    req<{ added: number; skipped: number; job_candidate_ids: string[] }>(
+      `/jobs/${jobId}/sourcing/add`,
+      { method: "POST", body: JSON.stringify({ candidates }) },
+    ),
+
   syncCall: (callId: string) =>
     req<{ call_id: string; normalized_status: string | null; vendor_status: string | null; hunar_call_id: string | null }>(
       `/calls/${callId}/sync`,
@@ -151,6 +168,16 @@ export type JobWorkflow = {
   approved: boolean;
   stages: StageDetail[];
 };
+export type CallingPolicyInput = {
+  allowed_days: string[];
+  earliest_call_time: string | null;
+  last_call_time: string | null;
+  timezone: string | null;
+  max_attempts: number;
+  retry_interval_hours: number;
+  language: string | null;
+};
+export type CallingPolicy = CallingPolicyInput & { id: string };
 export type StageEdit = {
   name: string;
   purpose?: string | null;
@@ -192,6 +219,36 @@ export type CandidateImport = {
 export type StageRun = { id: string; stage_id: string; stage_name: string | null; status: string };
 export type CallItem = { id: string; normalized_status: string; hunar_call_id: string | null };
 export type Fact = { field_key: string; value: string | null; source: string | null };
+export type PeopleSearchInput = {
+  titles: string[];
+  keywords: string[];
+  locations: string[];
+  skills: string[];
+  seniorities: string[];
+  page: number;
+  page_size: number;
+};
+export type ExternalCandidate = {
+  source: string;
+  source_id: string;
+  full_name: string | null;
+  title: string | null;
+  company: string | null;
+  location: string | null;
+  linkedin_url: string | null;
+  has_contact?: boolean;
+};
+export type PeopleSearchResult = {
+  provider: string;
+  requested_provider: string;
+  is_sample: boolean;
+  notice: string | null;
+  total: number | null;
+  page: number;
+  has_more: boolean;
+  suggested_query: PeopleSearchInput;
+  candidates: ExternalCandidate[];
+};
 export type Timeline = {
   job_candidate: JobCandidateOut;
   candidate: CandidateSummary;
