@@ -5,7 +5,28 @@
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-export type Principal = { org_id: string; user_id: string; role: string };
+export type Principal = {
+  org_id: string;
+  user_id: string;
+  role: string;
+  name?: string | null;
+  email?: string | null;
+};
+export type DashboardSummary = {
+  total_jobs: number;
+  active_jobs: number;
+  candidates_in_pipeline: number;
+  needs_review: number;
+  awaiting_result: number;
+  failed_calls: number;
+};
+export type ActivityItem = {
+  action: string;
+  entity_type: string;
+  to_state: string | null;
+  reason: string | null;
+  created_at: string;
+};
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
@@ -34,12 +55,18 @@ export const api = {
   },
   login: (email: string, password: string) =>
     req<Principal>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
+  signup: (input: { name: string; email: string; password: string; org_name?: string }) =>
+    req<Principal>("/auth/signup", { method: "POST", body: JSON.stringify(input) }),
   logout: () => req<null>("/auth/logout", { method: "POST" }),
   bootstrap: (org_name: string, user_email: string, password: string) =>
     req<{ org_id: string; user_id: string; role: string }>("/dev/bootstrap", {
       method: "POST",
       body: JSON.stringify({ org_name, user_email, password }),
     }),
+
+  // dashboard
+  dashboardSummary: () => req<DashboardSummary>("/dashboard/summary"),
+  dashboardActivity: () => req<ActivityItem[]>("/dashboard/activity"),
 
   // jobs
   listJobs: () => req<Job[]>("/jobs"),

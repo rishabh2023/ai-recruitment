@@ -9,10 +9,17 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, get_principal
 from app.api.errors import DomainError
-from app.api.schemas import LoginIn, MeOut
+from app.api.schemas import LoginIn, MeOut, SignupIn
 from app.config import settings
 from app.db.session import get_session
-from app.modules.organizations.auth import authenticate, create_session, revoke_session
+from app.modules.organizations.auth import (
+    EmailTakenError,
+    authenticate,
+    create_account,
+    create_session,
+    revoke_session,
+)
+from app.modules.organizations.models import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -29,6 +36,25 @@ def _set_session_cookie(response: Response, token: str) -> None:
     )
 
 
+def _me(user: User) -> MeOut:
+    return MeOut(org_id=user.org_id, user_id=user.id, role=user.role, name=user.name, email=user.email)
+
+
+@router.post("/signup", response_model=MeOut, status_code=201)
+def signup(body: SignupIn, response: Response, session: Session = Depends(get_session)) -> MeOut:
+    try:
+        user = create_account(
+            session, name=body.name, email=body.email, password=body.password, org_name=body.org_name
+        )
+    except EmailTakenError:
+        raise DomainError("An account with this email already exists.", code="conflict", status_code=409)
+    except ValueError as exc:
+        raise DomainError(str(exc), code="validation_error", status_code=422)
+    token = create_session(session, user=user, ttl=timedelta(hours=settings.session_ttl_hours))
+    _set_session_cookie(response, token)
+    return _me(user)
+
+
 @router.post("/login", response_model=MeOut)
 def login(body: LoginIn, response: Response, session: Session = Depends(get_session)) -> MeOut:
     user = authenticate(session, email=body.email, password=body.password)
@@ -36,7 +62,7 @@ def login(body: LoginIn, response: Response, session: Session = Depends(get_sess
         raise DomainError("Invalid email or password.", code="unauthorized", status_code=401)
     token = create_session(session, user=user, ttl=timedelta(hours=settings.session_ttl_hours))
     _set_session_cookie(response, token)
-    return MeOut(org_id=user.org_id, user_id=user.id, role=user.role)
+    return _me(user)
 
 
 @router.post("/logout", status_code=204)
@@ -52,5 +78,11 @@ def logout(
 
 
 @router.get("/me", response_model=MeOut)
-def me(principal: Principal = Depends(get_principal)) -> MeOut:
-    return MeOut(org_id=principal.org_id, user_id=principal.user_id, role=principal.role)
+def me(
+    principal: Principal = Depends(get_principal),
+    session: Session = Depends(get_session),
+) -> MeOut:
+    user = session.get(User, principal.user_id)
+    if user is None:  # session valid but user gone
+        raise DomainError("Not authenticated.", code="unauthorized", status_code=401)
+    return _me(user)

@@ -17,12 +17,16 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.security.passwords import verify_password
+from app.security.passwords import hash_password, verify_password
 
-from .models import User, UserSession
+from .models import Organization, User, UserSession
 
 DEFAULT_SESSION_TTL = timedelta(hours=12)
 _TOKEN_BYTES = 32
+
+
+class EmailTakenError(Exception):
+    """Raised when signing up with an email that already has an account."""
 
 
 @dataclass(frozen=True)
@@ -38,6 +42,35 @@ def _now() -> datetime:
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_account(
+    session: Session, *, name: str, email: str, password: str, org_name: str | None = None
+) -> User:
+    """Create a new organization and its first (admin) user.
+
+    Email is normalized and must be globally unique so that login (which looks up by email
+    across organizations) is unambiguous. Raises ``EmailTakenError`` otherwise.
+    """
+    email = email.strip().lower()
+    if not email or not password or not name.strip():
+        raise ValueError("name, email, and password are required")
+    existing = session.scalars(select(User).where(User.email == email)).first()
+    if existing is not None:
+        raise EmailTakenError(email)
+    org = Organization(name=(org_name or f"{name.strip()}'s Organization"))
+    session.add(org)
+    session.flush()
+    user = User(
+        org_id=org.id,
+        email=email,
+        name=name.strip(),
+        role="admin",  # first user of a new org is its admin/owner
+        password_hash=hash_password(password),
+    )
+    session.add(user)
+    session.flush()
+    return user
 
 
 def authenticate(session: Session, *, email: str, password: str) -> User | None:

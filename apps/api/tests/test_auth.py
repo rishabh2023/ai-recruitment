@@ -135,3 +135,34 @@ def test_logout_revokes_session(client):
     assert client.post("/auth/logout").status_code == 204
     # Cookie cleared client-side AND session revoked server-side.
     assert client.get("/auth/me").status_code == 401
+
+
+def test_signup_creates_account_and_logs_in(client):
+    r = client.post(
+        "/auth/signup",
+        json={"name": "Priya", "email": "priya@new.test", "password": "pw-123456"},
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["role"] == "admin" and body["name"] == "Priya" and body["email"] == "priya@new.test"
+    # signup logs the user in (cookie set) → protected route works
+    assert client.get("/auth/me").json()["email"] == "priya@new.test"
+    assert client.get("/jobs").status_code == 200
+
+
+def test_signup_duplicate_email_conflicts(client):
+    payload = {"name": "A", "email": "dup@new.test", "password": "pw-123456"}
+    assert client.post("/auth/signup", json=payload).status_code == 201
+    r = client.post("/auth/signup", json={**payload, "name": "B"})
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "conflict"
+
+
+def test_dashboard_summary_scoped_and_counts(client):
+    client.post("/auth/signup", json={"name": "Owner", "email": "owner@co.test", "password": "pw-123456"})
+    client.post("/jobs", json={"title": "Backend Engineer"})
+    s = client.get("/dashboard/summary").json()
+    assert s["total_jobs"] == 1
+    assert s["active_jobs"] == 0  # not activated yet
+    assert s["candidates_in_pipeline"] == 0
+    assert client.get("/dashboard/activity").status_code == 200

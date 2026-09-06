@@ -31,10 +31,37 @@ class LoginIn(BaseModel):
     password: str
 
 
+class SignupIn(BaseModel):
+    name: str
+    email: str
+    password: str
+    org_name: str | None = None  # company/workspace; defaults to "<name>'s Organization"
+
+
 class MeOut(BaseModel):
     org_id: UUID
     user_id: UUID
     role: str
+    name: str | None = None
+    email: str | None = None
+
+
+# --- dashboard ---
+class DashboardSummary(BaseModel):
+    total_jobs: int
+    active_jobs: int
+    candidates_in_pipeline: int
+    needs_review: int
+    awaiting_result: int
+    failed_calls: int
+
+
+class ActivityItem(BaseModel):
+    action: str
+    entity_type: str
+    to_state: str | None
+    reason: str | None
+    created_at: datetime
 
 
 # --- jobs ---

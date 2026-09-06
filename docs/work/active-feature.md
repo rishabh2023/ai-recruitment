@@ -2,13 +2,31 @@
 
 This file is the resume point for any agent. Keep it current.
 
-- **Active feature:** Real auth done — server-side session cookies replace the header stub.
-  Next: shadcn/ui + candidate/timeline UI, Phase 4 (Apollo), or live Hunar.
+- **Active feature:** Auth (login + **signup**), candidate import + timeline UI, and a
+  product **dashboard shell with sidebar** all done. Next: Phase 4 (Apollo) or live Hunar,
+  transition-policy auto PASS/REJECT, per-role widget/permission differences.
 - **Current agent:** Claude Code
-- **Branch / worktree:** repository root (`main`); baseline commit `6dffa77`, then auth commit.
-- **Status:** Phases 0–3 + real auth done. **53 API/py tests pass**; web builds + typechecks.
-  Migration `b1f2c3d4e5f6` reversible round-trip verified. Live HTTP smoke test of the full
-  login→me→logout flow passed (HttpOnly cookie, server-side revoke). No live Hunar call yet.
+- **Branch / worktree:** repository root (`main`); commits `6dffa77` (baseline), `7640f2c`
+  (auth), `cdd8190` (candidate/timeline UI), + this session's signup/dashboard commit.
+- **Status:** Phases 0–3 + auth + candidate/timeline UI + dashboard shell done. **56 API/py
+  tests pass**; web builds + typechecks. Verified in-browser end to end.
+
+## Signup + dashboard shell — done this session
+
+- **Signup:** `POST /auth/signup` (name, email, password, optional org_name) → creates a new
+  org + first **admin** user, logs them in (cookie). Email globally unique (409 on dup);
+  `auth.create_account` (HTTP-free) + `EmailTakenError`. `/auth/me` and login/signup now
+  return name + email. Tests in `test_auth.py` (signup, dup, dashboard summary). 56 pass.
+- **Dashboard API:** `GET /dashboard/summary` (org-scoped counts: total/active jobs,
+  candidates in pipeline, needs_review, awaiting_result, failed_calls) and
+  `GET /dashboard/activity` (last 15 audit events). New router `app/api/routers/dashboard.py`.
+- **Web shell:** `lib/auth.tsx` (AuthProvider/useAuth), `components/AppShell.tsx` (sidebar:
+  Dashboard, Jobs, Sourcing/Settings=soon; user footer + sign out; mobile-collapsing),
+  `components/AuthScreen.tsx` (Sign in / Create account tabs, demo creds pre-filled). Root
+  layout wraps everything; unauthenticated → AuthScreen. Pages: `/` = action-oriented
+  dashboard (stat widgets + active jobs + recent activity + Create Job CTA), `/jobs` = jobs
+  list. Candidate list/detail pages now render inside the shell.
+- **Demo creds:** `recruiter@demo.test` / `demo-password` (pre-filled on the sign-in tab).
 
 ## Real auth (session cookies) — done this session
 
@@ -86,9 +104,8 @@ This file is the resume point for any agent. Keep it current.
 
 ## Remaining work
 
-1. **shadcn/ui components**; candidate import + timeline **UI** (backend endpoints already
-   exist). (Real auth done — session cookies.) Consider signup/invite + password-reset flows
-   and per-role capability checks on top of the new auth.
+1. **shadcn/ui components** (shell is currently hand-rolled CSS); **per-role** dashboard
+   widgets/permissions (owner vs recruiter — arch §30/Q22); invite teammates + password-reset.
 2. **Live Hunar:** POST the built payload in a Celery task once a phone number is provisioned.
 3. **People search:** enable/upgrade Apollo key (403) or switch provider; then Phase 4 outreach.
 4. Transition-policy JSON evaluation (auto PASS/REJECT); calling-window/guardrails scheduling;
@@ -98,11 +115,17 @@ This file is the resume point for any agent. Keep it current.
 
 - Apollo Search 403 (key lacks API access). Provider choice pending.
 - No provisioned Hunar number → no live outbound call; Hunar key time-limited (~3 days from 2026-09-04).
-- No HTTP app yet — Phases 2–3 are service-layer only.
+- **Test suite truncates the dev DB:** the HTTP test fixtures run `TRUNCATE organizations …
+  CASCADE`, so running `pytest` against the same `DATABASE_URL` used for a live demo wipes
+  demo data (incl. the demo account). Re-seed the demo account after a full test run, or use a
+  separate test database. Worth fixing later (dedicated test DB / transactional client).
+- **Local Postgres:** this session Docker Desktop was down, so a local `postgresql@14` (brew)
+  was started and a `recruitment` role/db provisioned + migrated. The compose Postgres path
+  still works when Docker is running.
 
 ## Exact next action
 
-Ask which to do next: (a) polish the UI (shadcn/ui + candidate import/timeline screens),
+Ask which to do next: (a) adopt shadcn/ui + per-role dashboard widgets,
 (b) Phase 4 people-search outreach (needs a working provider key), or (c) wire live Hunar via
 Celery (needs a provisioned number). Default: candidate/timeline UI.
 
