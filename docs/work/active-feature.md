@@ -136,6 +136,15 @@ This file is the resume point for any agent. Keep it current.
   outcome on the Call; a Celery task (`app/tasks.py`, eager in dev) runs it. Verified live
   end-to-end via `POST /job-candidates/{id}/launch` → `dispatched:true` + real `hunar_call_id`,
   status synced SCHEDULED→CALLING→NO_ANSWER (a rejected call).
+- **Automatic results via webhook (wired):** when `PUBLIC_BASE_URL` is set, each dispatched
+  call registers Hunar `callback_config` (status/result/recording/summary → our
+  `POST /webhooks/hunar`), so results/recordings post back automatically and ingest via the
+  existing `WebhookService` (facts + run→NEEDS_REVIEW). Verified end-to-end in the UI: a
+  COMPLETED call populated Evidence & Results (interested/expected_ctc/notice_period) and moved
+  the stage to NEEDS_REVIEW. In local dev a public URL needs a tunnel (`cloudflared tunnel
+  --url http://localhost:8000`); the free quick-tunnel is flaky, so `POST /calls/{id}/sync`
+  ("Sync from Hunar" button) is the reliable on-demand fallback (same ingestion code). In prod,
+  set `PUBLIC_BASE_URL` to the deployed https domain — no tunnel, fully automatic.
 - **Rejected / unanswered handling:** a terminal not-connected call (NO_ANSWER/FAILED/CANCELLED)
   with no result moves the run AWAITING_RESULT→FAILED with a reason + audit (never stuck);
   RETRY_SCHEDULED (retries left) keeps it AWAITING_RESULT. Re-launching a FAILED/CANCELLED run

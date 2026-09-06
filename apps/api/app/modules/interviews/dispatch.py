@@ -72,6 +72,7 @@ class HunarDispatchService:
             mobile_number=candidate.phone,
             request_id=call.request_id,
             custom_data=custom_data,
+            callback_config=self._callback_config(),
         )
         try:
             resp = self._client.create_call(payload)
@@ -91,6 +92,20 @@ class HunarDispatchService:
         )
         self._s.flush()
         return call
+
+    def _callback_config(self) -> dict[str, str] | None:
+        """Register all Hunar event callbacks at our webhook endpoint so status/result/
+        recording/summary come back automatically. None when no public URL is configured."""
+        base = settings.public_base_url.rstrip("/")
+        if not base:
+            return None
+        url = f"{base}/webhooks/hunar"
+        return {
+            "call_status_callback_url": url,
+            "call_result_callback_url": url,
+            "call_recording_callback_url": url,
+            "call_summary_callback_url": url,
+        }
 
     # --- helpers ----------------------------------------------------------------
     def _resolve_agent_id(self, stage: JobWorkflowStage | None) -> str | None:

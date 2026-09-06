@@ -72,6 +72,28 @@ def _setup(session, *, with_agent="agent-1"):
     return org, user, jc, stage, run, call
 
 
+def test_dispatch_registers_webhook_callbacks_when_public_url_set(session, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "public_base_url", "https://example.test", raising=False)
+    org, user, jc, stage, run, call = _setup(session)
+    fake = FakeHunar()
+    HunarDispatchService(session, client=fake, actor_user_id=user.id).dispatch(call.id)
+    cb = fake.last_payload["callback_config"]
+    url = "https://example.test/webhooks/hunar"
+    assert cb["call_result_callback_url"] == url
+    assert cb["call_status_callback_url"] == url
+    assert cb["call_recording_callback_url"] == url
+    assert cb["call_summary_callback_url"] == url
+
+
+def test_dispatch_omits_callbacks_when_no_public_url(session):
+    org, user, jc, stage, run, call = _setup(session)
+    fake = FakeHunar()
+    HunarDispatchService(session, client=fake, actor_user_id=user.id).dispatch(call.id)
+    assert "callback_config" not in fake.last_payload  # nothing to register
+
+
 def test_dispatch_success_updates_call_and_fills_required_vars(session):
     org, user, jc, stage, run, call = _setup(session)
     fake = FakeHunar(required=["candidate_name", "job_role", "company", "location", "hobby"])

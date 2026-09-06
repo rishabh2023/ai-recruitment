@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     hunar_webhook_signing_key: str = ""
     # Agent used for AI stages that have no explicit HunarAgentConfig (demo/default).
     hunar_default_agent_id: str = ""
+    # Public base URL of THIS API (e.g. an https tunnel in dev). When set, outbound calls
+    # register Hunar webhook callbacks so status/result/recording come back automatically.
+    public_base_url: str = ""
     # Safety switch: real outbound calls are placed ONLY when this is true (and a key is set).
     # Off by default so tests/dev never dial a real number unintentionally.
     hunar_live_calls_enabled: bool = False

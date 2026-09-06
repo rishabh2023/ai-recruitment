@@ -29,6 +29,7 @@ def _hermetic_external(monkeypatch):
     monkeypatch.setattr(settings, "hunar_live_calls_enabled", False, raising=False)
     monkeypatch.setattr(settings, "hunar_api_key", "", raising=False)
     monkeypatch.setattr(settings, "hunar_default_agent_id", "", raising=False)
+    monkeypatch.setattr(settings, "public_base_url", "", raising=False)
 
 
 def _url() -> str:
