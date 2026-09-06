@@ -16,9 +16,22 @@ class ORMModel(BaseModel):
 class BootstrapIn(BaseModel):
     org_name: str = "Demo Org"
     user_email: str = "recruiter@demo.test"
+    password: str = "demo-password"
 
 
 class BootstrapOut(BaseModel):
+    org_id: UUID
+    user_id: UUID
+    role: str
+
+
+# --- auth ---
+class LoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class MeOut(BaseModel):
     org_id: UUID
     user_id: UUID
     role: str

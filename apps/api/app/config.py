@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     hunar_webhook_signing_key: str = ""
     cors_origins: str = "http://localhost:3000"
 
+    # Session-cookie auth. `session_cookie_secure` must be True in production (HTTPS);
+    # left False so the cookie works over plain-HTTP localhost during development.
+    session_cookie_name: str = "session"
+    session_cookie_secure: bool = False
+    session_ttl_hours: int = 12
+
     @property
     def sqlalchemy_url(self) -> str:
         url = self.database_url

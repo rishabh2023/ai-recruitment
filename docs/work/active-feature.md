@@ -2,12 +2,29 @@
 
 This file is the resume point for any agent. Keep it current.
 
-- **Active feature:** App scaffold done (F-005) — FastAPI + Next.js now expose Phases 2–3.
-  Next: real auth, shadcn/ui + candidate/timeline UI, Phase 4 (Apollo), or live Hunar.
+- **Active feature:** Real auth done — server-side session cookies replace the header stub.
+  Next: shadcn/ui + candidate/timeline UI, Phase 4 (Apollo), or live Hunar.
 - **Current agent:** Claude Code
-- **Branch / worktree:** repository root; `git init` done, no commits yet
-- **Status:** Phases 0–3 service layer + HTTP/UI scaffold done. **41 API/py tests pass**; web
-  builds + typechecks. No real auth; no live Hunar call (needs provisioned number).
+- **Branch / worktree:** repository root (`main`); baseline commit `6dffa77`, then auth commit.
+- **Status:** Phases 0–3 + real auth done. **53 API/py tests pass**; web builds + typechecks.
+  Migration `b1f2c3d4e5f6` reversible round-trip verified. Live HTTP smoke test of the full
+  login→me→logout flow passed (HttpOnly cookie, server-side revoke). No live Hunar call yet.
+
+## Real auth (session cookies) — done this session
+
+- Mechanism: HttpOnly + SameSite=Lax session cookie backed by a `user_sessions` table
+  (Postgres, durable + revocable). Endpoints `POST /auth/login`, `POST /auth/logout`,
+  `GET /auth/me` (`app/api/routers/auth.py`). `deps.get_principal` now resolves the cookie.
+- Passwords: PBKDF2-HMAC-SHA256, stdlib only (`app/security/passwords.py`); `users.password_hash`
+  added (nullable). Only a SHA-256 hash of each session token is stored. Login is
+  case-insensitive on email and non-enumerating (wrong password == unknown user == no-password).
+- `POST /dev/bootstrap` now sets a password so you can then log in; CORS `allow_credentials=True`.
+- Config: `SESSION_COOKIE_NAME`, `SESSION_COOKIE_SECURE` (must be 1 in prod), `SESSION_TTL_HOURS`.
+- Web: `lib/api.ts` uses `credentials:"include"` + `me/login/logout`; dashboard has a real
+  sign-in form (+ "create demo org" dev convenience) and sign-out. shadcn/ui still not added.
+- Migration `app/modules/organizations/migrations/b1f2c3d4e5f6_users_password_and_sessions.py`
+  (down_revision `4dfb8fbd7911`). Tests: `tests/test_auth.py` (12) + `test_api.py` updated to
+  log in.
 
 ## Completed work
 
@@ -69,8 +86,9 @@ This file is the resume point for any agent. Keep it current.
 
 ## Remaining work
 
-1. **Real auth** (replace header stub); **shadcn/ui components**; candidate import + timeline
-   **UI** (backend endpoints already exist).
+1. **shadcn/ui components**; candidate import + timeline **UI** (backend endpoints already
+   exist). (Real auth done — session cookies.) Consider signup/invite + password-reset flows
+   and per-role capability checks on top of the new auth.
 2. **Live Hunar:** POST the built payload in a Celery task once a phone number is provisioned.
 3. **People search:** enable/upgrade Apollo key (403) or switch provider; then Phase 4 outreach.
 4. Transition-policy JSON evaluation (auto PASS/REJECT); calling-window/guardrails scheduling;
@@ -85,8 +103,8 @@ This file is the resume point for any agent. Keep it current.
 ## Exact next action
 
 Ask which to do next: (a) polish the UI (shadcn/ui + candidate import/timeline screens),
-(b) real auth, (c) Phase 4 people-search outreach (needs a working provider key), or (d) wire
-live Hunar via Celery (needs a provisioned number). Default: candidate/timeline UI.
+(b) Phase 4 people-search outreach (needs a working provider key), or (c) wire live Hunar via
+Celery (needs a provisioned number). Default: candidate/timeline UI.
 
 ## How to run (demo)
 

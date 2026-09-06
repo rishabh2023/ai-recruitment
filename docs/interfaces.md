@@ -30,7 +30,14 @@ boundaries, webhooks, and background jobs.
 
 ## Authentication and authorization
 
-- Session/token-based auth; the principal carries organization id and role.
+- Session/token-based auth; the principal carries organization id and role. **Realized:**
+  server-side sessions via an HttpOnly, SameSite=Lax cookie. `POST /auth/login` (email +
+  password) validates credentials and sets the cookie; `POST /auth/logout` revokes the session
+  server-side and clears the cookie; `GET /auth/me` returns the current principal. Passwords are
+  stored as PBKDF2-HMAC-SHA256 hashes (stdlib, no external dependency); only a SHA-256 hash of
+  each session token is persisted (`user_sessions`), so a DB leak cannot be replayed. Sessions
+  live in Postgres (durable, explicitly revocable), not Redis. Cookies must be `Secure` in
+  production (`SESSION_COOKIE_SECURE=1`); left off for plain-HTTP localhost.
 - **Role-based capabilities**, not enterprise RBAC (see `docs/domain.md` for the matrix).
 - Every request is authorized against the resource's organization. Candidate data access is
   always authorization-checked. Cross-organization access is impossible by construction.

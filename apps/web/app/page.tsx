@@ -2,61 +2,103 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api, getSession, setSession, type Job, type Session } from "@/lib/api";
+import { api, type Job, type Principal } from "@/lib/api";
 
 export default function Dashboard() {
-  const [session, setLocal] = useState<Session | null>(null);
+  const [me, setMe] = useState<Principal | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Login form state
+  const [email, setEmail] = useState("recruiter@demo.test");
+  const [password, setPassword] = useState("demo-password");
+
   useEffect(() => {
-    setLocal(getSession());
-    setLoading(false);
+    api.me().then((p) => {
+      setMe(p);
+      setLoading(false);
+    });
   }, []);
 
   useEffect(() => {
-    if (!session) return;
+    if (!me) return;
     api.listJobs().then(setJobs).catch((e) => setError(e.message));
-  }, [session]);
+  }, [me]);
 
-  async function connect() {
+  async function login() {
     setError(null);
     try {
-      const b = await api.bootstrap("Demo Org");
-      const s = { orgId: b.org_id, userId: b.user_id };
-      setSession(s);
-      setLocal(s);
+      setMe(await api.login(email, password));
     } catch (e) {
       setError((e as Error).message);
     }
   }
 
+  async function createDemoOrg() {
+    setError(null);
+    try {
+      await api.bootstrap("Demo Org", email, password);
+      setMe(await api.login(email, password));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function logout() {
+    await api.logout().catch(() => {});
+    setMe(null);
+    setJobs([]);
+  }
+
   if (loading) return <main className="container">Loading…</main>;
+
+  if (!me) {
+    return (
+      <main className="container">
+        <div className="header">
+          <h1>Sign in</h1>
+        </div>
+        {error && <p className="error">{error}</p>}
+        <div className="card" style={{ display: "grid", gap: 12, maxWidth: 380 }}>
+          <label>
+            Email
+            <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" />
+          </label>
+          <label>
+            Password
+            <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" />
+          </label>
+          <button onClick={login}>Sign in</button>
+          <p className="muted" style={{ fontSize: 13 }}>
+            No account yet?{" "}
+            <button className="linklike" onClick={createDemoOrg}>
+              Create a demo org
+            </button>{" "}
+            (dev: calls <code>/dev/bootstrap</code>).
+          </p>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="container">
       <div className="header">
         <h1>Hiring Dashboard</h1>
-        {session ? (
+        <div className="row" style={{ gap: 8 }}>
           <Link className="btn" href="/jobs/new">+ Create Job</Link>
-        ) : (
-          <button onClick={connect}>Connect (dev session)</button>
-        )}
+          <button onClick={logout}>Sign out</button>
+        </div>
       </div>
+
+      <p className="muted" style={{ fontSize: 13 }}>
+        Signed in as <b>{me.role}</b> · org <code>{me.org_id}</code>
+      </p>
 
       {error && <p className="error">{error}</p>}
 
-      {!session && (
-        <div className="card">
-          <p className="muted">
-            No session yet. Click <b>Connect</b> to create a dev org + recruiter
-            (calls <code>/dev/bootstrap</code>) so the console can talk to the API.
-          </p>
-        </div>
-      )}
-
-      {session && jobs.length === 0 && (
+      {jobs.length === 0 && (
         <div className="card muted">No jobs yet. Create your first job to get started.</div>
       )}
 

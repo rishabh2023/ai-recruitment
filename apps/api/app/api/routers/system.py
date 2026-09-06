@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.api.schemas import BootstrapIn, BootstrapOut
 from app.db.session import get_session
 from app.modules.organizations.models import Organization, User
+from app.security.passwords import hash_password
 
 router = APIRouter(tags=["system"])
 
@@ -24,7 +25,12 @@ def bootstrap(body: BootstrapIn, session: Session = Depends(get_session)) -> Boo
     org = Organization(name=body.org_name)
     session.add(org)
     session.flush()
-    user = User(org_id=org.id, email=body.user_email, role="recruiter")
+    user = User(
+        org_id=org.id,
+        email=body.user_email.strip().lower(),
+        role="recruiter",
+        password_hash=hash_password(body.password),
+    )
     session.add(user)
     session.flush()
     return BootstrapOut(org_id=org.id, user_id=user.id, role=user.role)

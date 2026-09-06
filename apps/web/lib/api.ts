@@ -1,41 +1,17 @@
 // Minimal API client for the FastAPI backend.
-// Dev auth: org/user ids from the bootstrap flow are stored in localStorage and sent as
-// X-Org-Id / X-User-Id headers (placeholder until real auth — see docs/interfaces.md).
+// Auth: server-side session cookie. The browser stores the HttpOnly `session` cookie set by
+// POST /auth/login and sends it automatically because every request uses credentials:"include".
+// We never read or store the token in JS; call `api.me()` to learn the current principal.
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-export type Session = { orgId: string; userId: string };
+export type Principal = { org_id: string; user_id: string; role: string };
 
-export function getSession(): Session | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem("session");
-    return raw ? (JSON.parse(raw) as Session) : null;
-  } catch {
-    return null;
-  }
-}
-
-export function setSession(s: Session | null) {
-  if (typeof window === "undefined") return;
-  if (s) localStorage.setItem("session", JSON.stringify(s));
-  else localStorage.removeItem("session");
-}
-
-function headers(auth = true): Record<string, string> {
-  const h: Record<string, string> = { "Content-Type": "application/json" };
-  const s = getSession();
-  if (auth && s) {
-    h["X-Org-Id"] = s.orgId;
-    h["X-User-Id"] = s.userId;
-  }
-  return h;
-}
-
-async function req<T>(path: string, init?: RequestInit & { auth?: boolean }): Promise<T> {
+async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: { ...headers(init?.auth ?? true), ...(init?.headers ?? {}) },
+    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    credentials: "include", // send/receive the session cookie
     cache: "no-store",
   });
   const text = await res.text();
@@ -48,12 +24,24 @@ async function req<T>(path: string, init?: RequestInit & { auth?: boolean }): Pr
 }
 
 export const api = {
-  bootstrap: (orgName: string) =>
+  // auth
+  me: async (): Promise<Principal | null> => {
+    try {
+      return await req<Principal>("/auth/me");
+    } catch {
+      return null; // 401 → not logged in
+    }
+  },
+  login: (email: string, password: string) =>
+    req<Principal>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
+  logout: () => req<null>("/auth/logout", { method: "POST" }),
+  bootstrap: (org_name: string, user_email: string, password: string) =>
     req<{ org_id: string; user_id: string; role: string }>("/dev/bootstrap", {
       method: "POST",
-      auth: false,
-      body: JSON.stringify({ org_name: orgName }),
+      body: JSON.stringify({ org_name, user_email, password }),
     }),
+
+  // jobs
   listJobs: () => req<Job[]>("/jobs"),
   getJob: (id: string) => req<Job>(`/jobs/${id}`),
   createJob: (title: string) =>

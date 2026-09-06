@@ -21,17 +21,24 @@ def client():
 
 
 def _auth(client):
-    r = client.post("/dev/bootstrap", json={"org_name": "Acme"})
+    """Bootstrap an org+recruiter, then log in. The session cookie is stored on the
+    TestClient's cookie jar and sent automatically on later requests, so callers can pass an
+    empty headers dict."""
+    r = client.post(
+        "/dev/bootstrap",
+        json={"org_name": "Acme", "user_email": "recruiter@acme.test", "password": "pw-123456"},
+    )
     assert r.status_code == 201, r.text
-    b = r.json()
-    return {"X-Org-Id": b["org_id"], "X-User-Id": b["user_id"]}
+    login = client.post("/auth/login", json={"email": "recruiter@acme.test", "password": "pw-123456"})
+    assert login.status_code == 200, login.text
+    return {}
 
 
 def test_health(client):
     assert client.get("/health").json() == {"status": "ok"}
 
 
-def test_unauthorized_without_headers(client):
+def test_unauthorized_without_cookie(client):
     r = client.get("/jobs")
     assert r.status_code == 401
     assert r.json()["error"]["code"] == "unauthorized"
