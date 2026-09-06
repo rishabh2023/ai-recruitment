@@ -1,0 +1,10 @@
+# Backend deps (pinned). Install: python -m venv .venv && pip install -r requirements.txt
+SQLAlchemy==2.0.52
+alembic==1.19.2
+psycopg[binary]==3.3.5
+pytest==9.1.1
+fastapi==0.141.1
+uvicorn==0.52.4
+httpx==0.28.1
+pydantic==2.13.5
+pydantic-settings==2.15.0

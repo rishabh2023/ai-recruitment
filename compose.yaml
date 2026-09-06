@@ -1,0 +1,92 @@
+# Local development stack for AI Recruitment Workflow.
+#
+# This defines the durable infrastructure the modular monolith depends on:
+#   - PostgreSQL : durable business source of truth
+#   - Redis      : ephemeral coordination (Celery broker/backend, locks, cache, dedup)
+#
+# Application services (api, web, worker, beat) are declared but commented out until the
+# code exists in apps/api and apps/web. Do NOT uncomment them before those apps are built.
+# Secrets are read from the environment / a local .env file and are never committed.
+
+name: ai-recruitment-workflow
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-recruitment}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-recruitment}
+      POSTGRES_DB: ${POSTGRES_DB:-recruitment}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-recruitment}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- FastAPI backend ---
+  api:
+    build: ./apps/api
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    # Import the root .env directly (Hunar/Apollo/LLM keys, signing key, etc.).
+    env_file:
+      - .env
+    environment:
+      # These override .env so the container talks to the compose services, not localhost.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-recruitment}:${POSTGRES_PASSWORD:-recruitment}@postgres:5432/${POSTGRES_DB:-recruitment}
+      REDIS_URL: redis://redis:6379/0
+      RUN_MIGRATIONS: "1"
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # --- Not yet built (Celery workers / web have no image yet) ---
+  #
+  # worker:
+  #   build: ./apps/api
+  #   command: celery -A app.worker worker -l info
+  #   env_file: .env
+  #   depends_on:
+  #     redis: { condition: service_healthy }
+  #     postgres: { condition: service_healthy }
+  #
+  # beat:
+  #   build: ./apps/api
+  #   command: celery -A app.worker beat -l info
+  #   env_file: .env
+  #   depends_on:
+  #     redis: { condition: service_healthy }
+  #
+  # web:
+  #   build: ./apps/web
+  #   env_file: .env
+  #   depends_on:
+  #     - api
+  #   ports:
+  #     - "3000:3000"
+
+volumes:
+  postgres_data:
+  redis_data:
