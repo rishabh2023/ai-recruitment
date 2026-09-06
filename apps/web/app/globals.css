@@ -221,3 +221,5 @@ ul.activity time { font-size: 12px; white-space: nowrap; }
   .sourcing-card { grid-template-columns: 28px 1fr; }
   .sourcing-card .badge { grid-column: 2; justify-self: start; }
 }
+.sourcing-provider-row { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.sourcing-provider-row .field-hint { margin: 0; align-self: center; }

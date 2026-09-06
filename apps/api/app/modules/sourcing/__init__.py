@@ -6,6 +6,6 @@ fallback, and adds selected external candidates into the job's pipeline (SOURCED
 provenance. It never leaks provider internals to recruiters.
 """
 
-from .service import SourcingService, SourcingUnavailableError
+from .service import SourcingProviderError, SourcingService, SourcingUnavailableError
 
-__all__ = ["SourcingService", "SourcingUnavailableError"]
+__all__ = ["SourcingService", "SourcingUnavailableError", "SourcingProviderError"]

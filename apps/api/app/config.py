@@ -44,13 +44,16 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = False
     session_ttl_hours: int = 12
 
-    # People search (Flow B). Multi-provider by design (ADR-0001). `sample` is an offline,
-    # no-key provider used to keep sourcing demonstrable while a paid Apollo key is
-    # unavailable; set to `apollo` (with APOLLO_API_KEY) once a plan with Search access exists.
-    # When a real provider is configured but unreachable/plan-gated, SourcingService falls back
-    # to the sample provider and clearly flags the results as sample data.
-    people_search_provider: str = "sample"
+    # People search (Flow B). Multi-provider by design (ADR-0001): apollo, pdl, proxycurl,
+    # coresignal. Real data only — a provider that is unconfigured or plan-gated surfaces an
+    # honest error rather than fabricated data. The recruiter can also pick a provider per
+    # search; this is the default. (`sample` remains available for tests/local dev only, when
+    # explicitly selected — it is never an automatic fallback.)
+    people_search_provider: str = "apollo"
     apollo_api_key: str = ""
+    pdl_api_key: str = ""
+    proxycurl_api_key: str = ""
+    coresignal_api_key: str = ""
 
     # Platform LLM (product intelligence only: JD understanding, role classification, draft
     # workflow/rubric generation). When a key is set, JD extraction uses Claude; otherwise the

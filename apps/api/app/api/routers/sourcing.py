@@ -21,15 +21,22 @@ from app.api.schemas import (
     ExternalCandidateOut,
     PeopleSearchIn,
     PeopleSearchOut,
+    ProviderOption,
+    ProvidersOut,
     SourceCandidatesIn,
     SourceCandidatesOut,
 )
 from app.config import settings
 from app.db.session import get_session
 from app.integrations.people_search.base import ExternalCandidate, PeopleSearchQuery
+from app.integrations.people_search.registry import (
+    KNOWN_PROVIDERS,
+    PROVIDER_LABELS,
+    configured_providers,
+)
 from app.modules.jobs.models import Job
-from app.modules.sourcing import SourcingService
-from app.modules.sourcing.service import SourceCandidateInput
+from app.modules.sourcing import SourcingProviderError, SourcingService
+from app.modules.sourcing.service import SourceCandidateInput, provider_env_from_settings
 
 router = APIRouter(prefix="/jobs/{job_id}/sourcing", tags=["sourcing"])
 
@@ -57,6 +64,24 @@ def _candidate_out(c: ExternalCandidate) -> ExternalCandidateOut:
     )
 
 
+@router.get("/providers", response_model=ProvidersOut)
+def providers(job_id: UUID, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
+    """Real people-search providers and whether each is configured (has an API key).
+
+    The UI offers only real providers; unconfigured ones are shown disabled so an admin knows
+    to add a key in Settings. No sample/demo provider is offered here."""
+    _job_or_404(session, principal, job_id)
+    usable = set(configured_providers(provider_env_from_settings()))
+    opts = [
+        ProviderOption(key=k, label=PROVIDER_LABELS.get(k, k), configured=k in usable)
+        for k in KNOWN_PROVIDERS
+    ]
+    default = settings.people_search_provider if settings.people_search_provider in usable else (
+        next(iter(usable), None)
+    )
+    return ProvidersOut(default=default, providers=opts)
+
+
 @router.get("/suggested-query", response_model=PeopleSearchIn)
 def suggested_query(job_id: UUID, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
     job = _job_or_404(session, principal, job_id)
@@ -78,9 +103,12 @@ def search(job_id: UUID, body: PeopleSearchIn, session: Session = Depends(get_se
         seniorities=[s for s in body.seniorities if s.strip()],
         page=body.page, page_size=body.page_size,
     )
-    outcome = SourcingService(session, principal.user_id).search(
-        job, query, settings.people_search_provider
-    )
+    requested = body.provider or settings.people_search_provider
+    try:
+        outcome = SourcingService(session, principal.user_id).search(job, query, requested)
+    except SourcingProviderError as exc:
+        # Honest failure: the real provider is unconfigured/plan-gated/erroring. No fake data.
+        raise DomainError(str(exc), code="provider_unavailable", status_code=502)
     return PeopleSearchOut(
         provider=outcome.provider,
         requested_provider=outcome.requested_provider,

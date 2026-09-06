@@ -245,6 +245,18 @@ class PeopleSearchIn(BaseModel):
     seniorities: list[str] = []
     page: int = 1
     page_size: int = 25
+    provider: str | None = None  # which people-search provider to query; default = configured
+
+
+class ProviderOption(BaseModel):
+    key: str
+    label: str
+    configured: bool  # whether this provider has an API key set (usable)
+
+
+class ProvidersOut(BaseModel):
+    default: str | None  # configured default provider, if any is usable
+    providers: list[ProviderOption]
 
 
 class ExternalCandidateOut(BaseModel):

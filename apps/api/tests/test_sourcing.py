@@ -53,42 +53,43 @@ def test_suggested_query_from_jd(client):
 def test_sample_search_returns_and_filters(client):
     h = _auth(client)
     jid = _job_with_jd(client, h)
-    # Broad search returns sample profiles, clearly flagged as sample.
-    r = client.post(f"/jobs/{jid}/sourcing/search", json={}, headers=h)
+    # The default in tests is the offline sample provider (see conftest); it is explicit, not
+    # a fallback. Broad search returns profiles flagged as sample.
+    r = client.post(f"/jobs/{jid}/sourcing/search", json={"provider": "sample"}, headers=h)
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["provider"] == "sample" and body["is_sample"] is True
-    assert body["notice"]
     assert len(body["candidates"]) > 0
     # Search never returns contact details (mirrors real providers — enrichment required).
     assert all(c["has_contact"] is False for c in body["candidates"])
 
     # Filtered search narrows results.
-    r2 = client.post(f"/jobs/{jid}/sourcing/search", json={"titles": ["Account Executive"]}, headers=h)
+    r2 = client.post(f"/jobs/{jid}/sourcing/search", json={"provider": "sample", "titles": ["Account Executive"]}, headers=h)
     cands = r2.json()["candidates"]
     assert cands and all("account executive" in (c["title"] or "").lower() for c in cands)
 
 
-def test_apollo_requested_falls_back_to_sample(client, monkeypatch):
+def test_providers_list(client):
     h = _auth(client)
     jid = _job_with_jd(client, h)
-
-    # Force the configured provider to apollo and make provider construction fail (plan gate).
-    from app.api.routers import sourcing as sourcing_router
-
-    monkeypatch.setattr(sourcing_router.settings, "people_search_provider", "apollo")
-
-    def _boom(*_a, **_k):
-        raise RuntimeError("Apollo /mixed_people/api_search HTTP 403: not on your plan")
-
-    monkeypatch.setattr("app.modules.sourcing.service.get_people_search_provider", _boom)
-
-    r = client.post(f"/jobs/{jid}/sourcing/search", json={}, headers=h)
+    r = client.get(f"/jobs/{jid}/sourcing/providers", headers=h)
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["requested_provider"] == "apollo"
-    assert body["provider"] == "sample" and body["is_sample"] is True
-    assert "403" in body["notice"] or "not available" in body["notice"].lower()
+    keys = {p["key"] for p in body["providers"]}
+    assert {"apollo", "pdl", "proxycurl", "coresignal"} <= keys
+    # No real keys in the test env → none configured, and no sample offered as a real provider.
+    assert all(p["configured"] is False for p in body["providers"])
+    assert "sample" not in keys
+
+
+def test_search_unconfigured_provider_returns_502(client):
+    """A real provider with no key surfaces an honest error — never fabricated data."""
+    h = _auth(client)
+    jid = _job_with_jd(client, h)
+    r = client.post(f"/jobs/{jid}/sourcing/search", json={"provider": "apollo"}, headers=h)
+    assert r.status_code == 502, r.text
+    assert r.json()["error"]["code"] == "provider_unavailable"
+    assert "not configured" in r.json()["error"]["message"].lower()
 
 
 def test_add_candidates_to_pipeline_and_dedup(client):
@@ -173,9 +174,9 @@ def test_enrich_sample_then_outreach(client):
     assert state == "CONTACTED"
 
 
-def test_enrich_falls_back_when_provider_unavailable(client):
-    """A candidate sourced from a real provider (apollo) with no working key/plan enriches via
-    the flagged sample fallback rather than failing."""
+def test_enrich_unconfigured_provider_returns_502(client):
+    """A candidate sourced from a real provider (apollo) with no key surfaces an honest error
+    on enrich — the platform never fabricates a contact number."""
     h = _auth(client)
     jid = _job_with_ai_workflow(client, h)
     client.post(
@@ -184,7 +185,6 @@ def test_enrich_falls_back_when_provider_unavailable(client):
         headers=h,
     )
     jc_id = client.get(f"/jobs/{jid}/candidates", headers=h).json()[0]["id"]
-    r = client.post(f"/job-candidates/{jc_id}/enrich", headers=h).json()
-    assert r["requested_provider"] == "apollo"
-    assert r["is_sample"] is True and r["phone"]
-    assert "apollo" in (r["notice"] or "").lower()
+    r = client.post(f"/job-candidates/{jc_id}/enrich", headers=h)
+    assert r.status_code == 502, r.text
+    assert r.json()["error"]["code"] == "provider_unavailable"

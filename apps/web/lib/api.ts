@@ -127,6 +127,8 @@ export const api = {
       { method: "POST", body: JSON.stringify({ outcome, reason }) },
     ),
   // sourcing (people search & outreach — Flow B)
+  sourcingProviders: (jobId: string) =>
+    req<ProvidersInfo>(`/jobs/${jobId}/sourcing/providers`),
   suggestedQuery: (jobId: string) =>
     req<PeopleSearchInput>(`/jobs/${jobId}/sourcing/suggested-query`),
   peopleSearch: (jobId: string, query: PeopleSearchInput) =>
@@ -229,7 +231,10 @@ export type PeopleSearchInput = {
   seniorities: string[];
   page: number;
   page_size: number;
+  provider?: string | null;
 };
+export type ProviderOption = { key: string; label: string; configured: boolean };
+export type ProvidersInfo = { default: string | null; providers: ProviderOption[] };
 export type ExternalCandidate = {
   source: string;
   source_id: string;

@@ -30,6 +30,13 @@ def _hermetic_external(monkeypatch):
     monkeypatch.setattr(settings, "hunar_api_key", "", raising=False)
     monkeypatch.setattr(settings, "hunar_default_agent_id", "", raising=False)
     monkeypatch.setattr(settings, "public_base_url", "", raising=False)
+    # People search: blank real keys and default to the offline sample provider so the suite
+    # never makes a real people-search HTTP call (even if .env has APOLLO_API_KEY etc.).
+    monkeypatch.setattr(settings, "apollo_api_key", "", raising=False)
+    monkeypatch.setattr(settings, "pdl_api_key", "", raising=False)
+    monkeypatch.setattr(settings, "proxycurl_api_key", "", raising=False)
+    monkeypatch.setattr(settings, "coresignal_api_key", "", raising=False)
+    monkeypatch.setattr(settings, "people_search_provider", "sample", raising=False)
 
 
 def _url() -> str:

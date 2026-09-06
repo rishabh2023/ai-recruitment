@@ -4,10 +4,10 @@ Responsibilities (platform-owned, per docs/architecture.md §Search/Outreach):
 
 - Suggest a normalized search query from a job's approved/latest JD metadata, so the recruiter
   starts from something useful instead of a blank form.
-- Run people search against the configured provider. If that provider is unavailable — no key,
-  a plan gate (Apollo Free plan returns 403), or a transport error — fall back to the offline
-  `sample` provider and **clearly flag** the results as sample data. Never fail silently and
-  never present sample data as live.
+- Run people search against the provider the recruiter selected (or the configured default),
+  across the real providers (Apollo, PDL, Proxycurl, Coresignal). Real data only: a provider
+  that is unconfigured, plan-gated (Apollo Free returns 403), or failing raises
+  SourcingProviderError with the real reason — the platform never fabricates results.
 - Add selected external candidates into the job's pipeline as SOURCED, with provenance
   (`source`, `source_id`), de-duplicating by (source, source_id) within the job so a repeated
   add does not create duplicate participations.
@@ -24,6 +24,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.integrations.llm import ExtractedJob
 from app.integrations.people_search.base import (
     EnrichmentResult,
@@ -31,16 +32,44 @@ from app.integrations.people_search.base import (
     PeopleSearchQuery,
     PeopleSearchResult,
 )
-from app.integrations.people_search.registry import get_people_search_provider
-from app.integrations.people_search.sample import SampleProvider
+from app.integrations.people_search.registry import (
+    PROVIDER_LABELS,
+    get_people_search_provider,
+)
 from app.modules.audit.log import write_audit
 from app.modules.candidates.models import Candidate, JobCandidate
 from app.modules.candidates.service import CandidateService
 from app.modules.jobs.models import Job, JobVersion
 
 
+def provider_env_from_settings() -> dict[str, str]:
+    """Provider API keys as an env mapping, sourced from settings (which loads .env).
+
+    The registry looks up keys by env var name; settings is the single source of truth for
+    config, so we hand it the same names. Only non-empty keys are included, so
+    `configured_providers` reflects exactly what is usable."""
+    values = {
+        "APOLLO_API_KEY": settings.apollo_api_key,
+        "PDL_API_KEY": settings.pdl_api_key,
+        "PROXYCURL_API_KEY": settings.proxycurl_api_key,
+        "CORESIGNAL_API_KEY": settings.coresignal_api_key,
+    }
+    env = {var: val for var, val in values.items() if (val or "").strip()}
+    env["PEOPLE_SEARCH_PROVIDER"] = settings.people_search_provider
+    return env
+
+
 class SourcingUnavailableError(RuntimeError):
     """Raised when neither the configured provider nor the fallback can run (unexpected)."""
+
+
+class SourcingProviderError(RuntimeError):
+    """A real people-search provider was unconfigured, plan-gated, or failed. Carries the
+    provider key so the API can surface an honest, actionable error (no fabricated data)."""
+
+    def __init__(self, message: str, *, provider: str) -> None:
+        super().__init__(message)
+        self.provider = provider
 
 
 @dataclass(frozen=True)
@@ -104,49 +133,42 @@ class SourcingService:
     def search(
         self, job: Job, query: PeopleSearchQuery, requested_provider: str
     ) -> SearchOutcome:
-        """Run a search, falling back to sample data (clearly flagged) on provider failure."""
-        requested = (requested_provider or "sample").lower()
-        if requested == "sample":
-            result = SampleProvider().search(query)
-            return SearchOutcome(
-                result=result, provider="sample", requested_provider="sample",
-                is_sample=True,
-                notice="Showing sample profiles. Configure a live people-search provider to search real candidates.",
-            )
+        """Run a real people search against the chosen provider.
+
+        No sample fallback: results come only from the real provider the recruiter selected
+        (or the configured default). A provider that is unconfigured, plan-gated, or failing
+        raises SourcingProviderError with the real reason — the platform never substitutes
+        fabricated data for a failed lookup."""
+        requested = (requested_provider or "").lower() or None
         try:
-            provider = get_people_search_provider(requested)
+            provider = get_people_search_provider(requested, env=provider_env_from_settings())
+        except ValueError as exc:
+            raise SourcingProviderError(str(exc), provider=requested or "default") from exc
+        try:
             result = provider.search(query)
-            return SearchOutcome(
-                result=result, provider=requested, requested_provider=requested,
-                is_sample=False, notice=None,
-            )
-        except Exception as exc:  # provider missing/plan-gated/transport — degrade, don't fail
+        except Exception as exc:  # transport / plan gate / vendor error
             reason = _short_reason(exc)
-            fallback = SampleProvider().search(query)
             write_audit(
                 self._s, org_id=job.org_id, actor_user_id=self._actor,
-                action="sourcing.provider_unavailable", entity_type="job", entity_id=job.id,
-                reason=f"{requested}: {reason}",
-                meta={"requested_provider": requested},
+                action="sourcing.provider_error", entity_type="job", entity_id=job.id,
+                reason=f"{provider.key}: {reason}", meta={"provider": provider.key},
             )
-            return SearchOutcome(
-                result=fallback, provider="sample", requested_provider=requested,
-                is_sample=True,
-                notice=(
-                    f"The {requested.title()} people-search provider is not available "
-                    f"({reason}). Showing sample profiles so you can try the flow."
-                ),
-            )
+            label = PROVIDER_LABELS.get(provider.key, provider.key)
+            raise SourcingProviderError(f"{label} search failed: {reason}", provider=provider.key) from exc
+        return SearchOutcome(
+            result=result, provider=provider.key, requested_provider=provider.key,
+            is_sample=provider.key == "sample", notice=None,
+        )
 
     # --- enrichment (reveal contact for outreach) -------------------------------
     def enrich(self, job_candidate: JobCandidate) -> EnrichmentOutcome:
         """Reveal a sourced candidate's phone/email so an outreach call can be placed.
 
-        Idempotent: if the candidate already has a phone, returns it unchanged. Uses the
-        provider the candidate was sourced from; if that provider cannot enrich synchronously
-        (Apollo's async webhook / plan gate), falls back to the offline sample provider and
-        flags the result. Persists phone/email on the Candidate + as facts with provenance,
-        moves SOURCED → OUTREACH_PENDING, and audits."""
+        Idempotent: if the candidate already has a phone, returns it unchanged. Uses the real
+        provider the candidate was sourced from; if that provider cannot enrich (Apollo's async
+        webhook / plan gate, or a transport error) it raises SourcingProviderError with the
+        real reason — no fabricated contact. Persists phone/email on the Candidate + as facts
+        with provenance, moves SOURCED → OUTREACH_PENDING, and audits."""
         candidate = self._s.get(Candidate, job_candidate.candidate_id)
         job = self._s.get(Job, job_candidate.job_id)
         if candidate.phone:
@@ -157,10 +179,10 @@ class SourcingService:
                 notice="This candidate already has a contact number.",
             )
 
-        requested = (candidate.source or "sample").lower()
-        result, provider_used, is_sample, notice = self._run_enrichment(
-            job, requested, candidate.source_id or "", candidate.full_name
-        )
+        provider_used = (candidate.source or "").lower()
+        result = self._run_enrichment(job, provider_used, candidate.source_id or "", candidate.full_name)
+        is_sample = provider_used == "sample"
+        notice = None
 
         if result.phone:
             candidate.phone = result.phone
@@ -178,32 +200,35 @@ class SourcingService:
             meta={"provider": provider_used, "is_sample": is_sample,
                   "revealed": [k for k, v in (("phone", result.phone), ("email", result.email)) if v]},
         )
+        if not result.phone:
+            raise SourcingProviderError(
+                f"{PROVIDER_LABELS.get(provider_used, provider_used)} did not return a phone "
+                f"number for this candidate (contact reveal may require a paid plan).",
+                provider=provider_used,
+            )
         return EnrichmentOutcome(
             phone=result.phone, email=result.email, provider=provider_used,
-            requested_provider=requested, is_sample=is_sample, already_had_contact=False,
+            requested_provider=provider_used, is_sample=is_sample, already_had_contact=False,
             notice=notice,
         )
 
-    def _run_enrichment(self, job: Job, requested: str, source_id: str, full_name: str | None):
-        """Return (EnrichmentResult, provider_used, is_sample, notice), degrading to sample."""
-        if requested == "sample":
-            return SampleProvider().enrich(source_id, full_name=full_name), "sample", True, None
+    def _run_enrichment(self, job: Job, provider_key: str, source_id: str, full_name: str | None):
+        """Enrich via the real provider the candidate was sourced from. No fallback."""
         try:
-            provider = get_people_search_provider(requested)
-            return provider.enrich(source_id, full_name=full_name), requested, False, None
+            provider = get_people_search_provider(provider_key, env=provider_env_from_settings())
+        except ValueError as exc:
+            raise SourcingProviderError(str(exc), provider=provider_key or "default") from exc
+        try:
+            return provider.enrich(source_id, full_name=full_name)
         except Exception as exc:
             reason = _short_reason(exc)
             write_audit(
                 self._s, org_id=job.org_id, actor_user_id=self._actor,
-                action="sourcing.enrichment_unavailable", entity_type="job", entity_id=job.id,
-                reason=f"{requested}: {reason}", meta={"requested_provider": requested},
+                action="sourcing.enrichment_error", entity_type="job", entity_id=job.id,
+                reason=f"{provider.key}: {reason}", meta={"provider": provider.key},
             )
-            fallback = SampleProvider().enrich(source_id, full_name=full_name)
-            return (
-                fallback, "sample", True,
-                f"{requested.title()} enrichment is not available ({reason}). "
-                f"Used a sample contact number so you can try outreach.",
-            )
+            label = PROVIDER_LABELS.get(provider.key, provider.key)
+            raise SourcingProviderError(f"{label} enrichment failed: {reason}", provider=provider.key) from exc
 
     def record_fact_on(self, job_candidate: JobCandidate, key: str, value: str, *, source: str) -> None:
         CandidateService(self._s, self._actor).record_fact(job_candidate, key, value, source=source)

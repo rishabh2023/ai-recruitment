@@ -9,6 +9,7 @@ import {
   type Job,
   type PeopleSearchInput,
   type PeopleSearchResult,
+  type ProvidersInfo,
 } from "@/lib/api";
 
 const EMPTY_QUERY: PeopleSearchInput = {
@@ -34,6 +35,9 @@ function SourcingInner() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [jobsLoading, setJobsLoading] = useState(true);
   const [jobId, setJobId] = useState<string | null>(jobParam);
+
+  const [providers, setProviders] = useState<ProvidersInfo | null>(null);
+  const [provider, setProvider] = useState<string>("");
 
   const [titles, setTitles] = useState("");
   const [locations, setLocations] = useState("");
@@ -75,10 +79,20 @@ function SourcingInner() {
     setSelected({});
     setError(null);
     api.suggestedQuery(jobId).then(applyQuery).catch(() => {});
+    api
+      .sourcingProviders(jobId)
+      .then((p) => {
+        setProviders(p);
+        const firstConfigured = p.providers.find((x) => x.configured)?.key;
+        setProvider(p.default ?? firstConfigured ?? p.providers[0]?.key ?? "");
+      })
+      .catch(() => {});
   }, [jobId, applyQuery]);
 
   const selectedList = useMemo(() => Object.values(selected), [selected]);
   const activeJob = jobs.find((j) => j.id === jobId) || null;
+  const providerConfigured = !!providers?.providers.find((p) => p.key === provider)?.configured;
+  const anyConfigured = !!providers?.providers.some((p) => p.configured);
 
   async function runSearch(page = 1) {
     if (!jobId) return;
@@ -94,6 +108,7 @@ function SourcingInner() {
         skills: toList(skills),
         page,
         page_size: 25,
+        provider: provider || undefined,
       };
       const res = await api.peopleSearch(jobId, q);
       setResult(res);
@@ -190,6 +205,23 @@ function SourcingInner() {
           {jobId && (
             <>
               <section className="sourcing-form" aria-label="Search filters">
+                <div className="sourcing-provider-row">
+                  <label className="sourcing-field" style={{ maxWidth: 260 }}>
+                    <span className="field-label">People-search provider</span>
+                    <select value={provider} onChange={(e) => setProvider(e.target.value)}>
+                      {(providers?.providers ?? []).map((p) => (
+                        <option key={p.key} value={p.key} disabled={!p.configured}>
+                          {p.label}{p.configured ? "" : " — not configured"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {!anyConfigured && (
+                    <p className="field-hint" style={{ float: "none" }}>
+                      No provider has an API key yet. Add one in <Link href="/settings">Settings</Link> to search real candidates.
+                    </p>
+                  )}
+                </div>
                 <div className="sourcing-fields">
                   <Field label="Job titles" hint="e.g. Forward Deployed Engineer" value={titles} onChange={setTitles} />
                   <Field label="Locations" hint="e.g. Bengaluru, Remote" value={locations} onChange={setLocations} />
@@ -198,7 +230,7 @@ function SourcingInner() {
                   <Field label="Keywords" hint="free-text match" value={keywords} onChange={setKeywords} />
                 </div>
                 <div className="sourcing-actions">
-                  <button className="btn" onClick={() => runSearch(1)} disabled={searching}>
+                  <button className="btn" onClick={() => runSearch(1)} disabled={searching || !providerConfigured}>
                     {searching ? "Searching…" : "Search candidates"}
                   </button>
                   <span className="field-hint">Filters are comma-separated. Empty fields don&apos;t restrict.</span>

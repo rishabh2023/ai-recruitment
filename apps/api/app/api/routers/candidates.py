@@ -20,7 +20,7 @@ from app.api.schemas import (
     JobCandidateOut,
     TimelineOut,
 )
-from app.modules.sourcing import SourcingService
+from app.modules.sourcing import SourcingProviderError, SourcingService
 from app.db.session import get_session
 from app.modules.candidates.models import Candidate, CandidateFact, CandidateStageRun, JobCandidate
 from app.modules.candidates.service import CandidateService
@@ -152,7 +152,10 @@ def enrich(jc_id: UUID, session: Session = Depends(get_session), principal: Prin
     Uses the provider the candidate was sourced from, degrading to a flagged sample contact
     when that provider can't enrich synchronously (Apollo async/plan gate). Idempotent."""
     jc = _jc_or_404(session, principal, jc_id)
-    outcome = SourcingService(session, principal.user_id).enrich(jc)
+    try:
+        outcome = SourcingService(session, principal.user_id).enrich(jc)
+    except SourcingProviderError as exc:
+        raise DomainError(str(exc), code="provider_unavailable", status_code=502)
     session.refresh(jc)
     return EnrichOut(
         phone=outcome.phone, email=outcome.email, provider=outcome.provider,
