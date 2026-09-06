@@ -9,6 +9,8 @@ Provider API keys are write-only: they are never returned, only their configured
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from sqlalchemy.orm import Session
 
 from fastapi import APIRouter, Depends
@@ -16,21 +18,31 @@ from fastapi import APIRouter, Depends
 from app.api.deps import Principal, get_principal
 from app.api.errors import DomainError
 from app.api.schemas import (
+    InviteCreatedOut,
+    InviteCreateIn,
+    PendingInviteOut,
     ProviderOption,
     SettingsOut,
     SettingsUpdateIn,
     SettingsUserOut,
 )
+from app.config import settings as app_settings
 from app.db.session import get_session
 from app.integrations.people_search.registry import (
     KNOWN_PROVIDERS,
     PROVIDER_LABELS,
     configured_providers,
 )
+from app.modules.organizations import invites as invite_svc
 from app.modules.organizations.models import Organization
 from app.modules.organizations.settings_service import SettingsService
 
 router = APIRouter(prefix="/settings", tags=["settings"])
+
+
+def _require_admin(principal: Principal) -> None:
+    if principal.role != "admin":
+        raise DomainError("Only an admin can change organization settings.", code="forbidden", status_code=403)
 
 
 def _view(session: Session, principal: Principal) -> SettingsOut:
@@ -52,6 +64,11 @@ def _view(session: Session, principal: Principal) -> SettingsOut:
             SettingsUserOut(id=u.id, name=u.name, email=u.email, role=u.role)
             for u in svc.list_users(principal.org_id)
         ],
+        invites=[
+            PendingInviteOut(id=i.id, email=i.email, name=i.name, role=i.role,
+                             created_at=i.created_at, expires_at=i.expires_at)
+            for i in invite_svc.list_pending(session, principal.org_id)
+        ],
     )
 
 
@@ -60,10 +77,38 @@ def get_settings(session: Session = Depends(get_session), principal: Principal =
     return _view(session, principal)
 
 
+@router.post("/invites", response_model=InviteCreatedOut, status_code=201)
+def create_invite(body: InviteCreateIn, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
+    """Invite a teammate (admin only). Returns a one-time accept link to share with them."""
+    _require_admin(principal)
+    try:
+        created = invite_svc.create_invite(
+            session, org_id=principal.org_id, email=body.email, role=body.role,
+            name=body.name, invited_by=principal.user_id,
+        )
+    except invite_svc.InviteError as exc:
+        raise DomainError(str(exc), code="validation_error", status_code=422)
+    inv = created.invite
+    accept_url = f"{app_settings.web_base_url.rstrip('/')}/accept-invite?token={created.token}"
+    return InviteCreatedOut(
+        id=inv.id, email=inv.email, name=inv.name, role=inv.role,
+        expires_at=inv.expires_at, accept_url=accept_url,
+    )
+
+
+@router.delete("/invites/{invite_id}", status_code=204)
+def revoke_invite(invite_id: UUID, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
+    """Revoke a pending invite (admin only)."""
+    _require_admin(principal)
+    try:
+        invite_svc.revoke_invite(session, principal.org_id, invite_id)
+    except invite_svc.InviteError as exc:
+        raise DomainError(str(exc), code="not_found", status_code=404)
+
+
 @router.put("", response_model=SettingsOut)
 def update_settings(body: SettingsUpdateIn, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
-    if principal.role != "admin":
-        raise DomainError("Only an admin can change organization settings.", code="forbidden", status_code=403)
+    _require_admin(principal)
     if body.default_provider is not None and body.default_provider not in KNOWN_PROVIDERS:
         raise DomainError("Unknown people-search provider.", code="validation_error", status_code=422)
     if body.provider_keys:

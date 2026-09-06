@@ -9,9 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import Principal, get_principal
 from app.api.errors import DomainError
-from app.api.schemas import LoginIn, MeOut, SignupIn
+from app.api.schemas import AcceptInviteIn, InvitePreviewOut, LoginIn, MeOut, SignupIn
 from app.config import settings
 from app.db.session import get_session
+from app.modules.organizations import invites as invite_svc
 from app.modules.organizations.auth import (
     EmailTakenError,
     authenticate,
@@ -19,7 +20,7 @@ from app.modules.organizations.auth import (
     create_session,
     revoke_session,
 )
-from app.modules.organizations.models import User
+from app.modules.organizations.models import Organization, User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -75,6 +76,29 @@ def logout(
     response.delete_cookie(key=settings.session_cookie_name, path="/")
     response.status_code = 204
     return response
+
+
+@router.get("/invite", response_model=InvitePreviewOut)
+def preview_invite(token: str, session: Session = Depends(get_session)) -> InvitePreviewOut:
+    """Preview a pending invite (public) so the accept screen can show org/email/role."""
+    try:
+        invite = invite_svc.peek_invite(session, token)
+    except invite_svc.InviteError as exc:
+        raise DomainError(str(exc), code="not_found", status_code=404)
+    org = session.get(Organization, invite.org_id)
+    return InvitePreviewOut(org_name=org.name if org else "", email=invite.email, role=invite.role)
+
+
+@router.post("/accept-invite", response_model=MeOut, status_code=201)
+def accept_invite(body: AcceptInviteIn, response: Response, session: Session = Depends(get_session)) -> MeOut:
+    """Accept an invite by setting a password; creates the user and signs them in (public)."""
+    try:
+        accepted = invite_svc.accept_invite(session, token=body.token, password=body.password, name=body.name)
+    except invite_svc.InviteError as exc:
+        raise DomainError(str(exc), code="validation_error", status_code=422)
+    token = create_session(session, user=accepted.user, ttl=timedelta(hours=settings.session_ttl_hours))
+    _set_session_cookie(response, token)
+    return _me(accepted.user)
 
 
 @router.get("/me", response_model=MeOut)

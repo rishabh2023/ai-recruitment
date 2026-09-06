@@ -460,6 +460,20 @@ def update_settings(
     return _call("PUT", "/settings", json=payload)
 
 
+@mcp.tool()
+def invite_teammate(email: str, role: str = "recruiter", name: str | None = None) -> dict:
+    """Admin-only. Invite a teammate by email + role (recruiter | hiring_manager | admin).
+    Returns a one-time `accept_url` to share with them (they set a password to join)."""
+    return _call("POST", "/settings/invites", json={"email": email, "role": role, "name": name})
+
+
+@mcp.tool()
+def revoke_invite(invite_id: str) -> dict:
+    """Admin-only. Revoke a pending team invite by id."""
+    _call("DELETE", f"/settings/invites/{invite_id}")
+    return {"revoked": invite_id}
+
+
 def main() -> None:
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     if transport == "streamable-http":

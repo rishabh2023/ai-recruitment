@@ -76,3 +76,31 @@ class OrgSettings(Base):
     hunar_live_calls_enabled = Column(Boolean, nullable=False, server_default="false")
     created_at = created_at()
     updated_at = updated_at()
+
+
+class UserInvite(Base):
+    """A pending invitation for someone to join an organization with a given role.
+
+    The raw invite token is shown to the admin once (as an accept link) and never stored — only
+    its SHA-256 hash lives here. An invite is redeemable while unaccepted, unrevoked, and
+    unexpired; accepting it creates/activates the user with a password and a session.
+    """
+
+    __tablename__ = "user_invites"
+
+    id = uuid_pk()
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    email = Column(Text, nullable=False)
+    name = Column(Text)
+    role = Column(Text, nullable=False)
+    token_hash = Column(Text, nullable=False, unique=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    accepted_at = Column(DateTime(timezone=True))
+    revoked_at = Column(DateTime(timezone=True))
+    invited_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    created_at = created_at()
+
+    __table_args__ = (
+        Index("ix_user_invites_org_id", "org_id"),
+        CheckConstraint("role IN ('recruiter','hiring_manager','admin')", name="invite_role_valid"),
+    )

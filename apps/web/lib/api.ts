@@ -149,6 +149,14 @@ export const api = {
   updateSettings: (patch: SettingsUpdate) =>
     req<Settings>("/settings", { method: "PUT", body: JSON.stringify(patch) }),
 
+  // team invites
+  createInvite: (input: { email: string; role: string; name?: string }) =>
+    req<InviteCreated>("/settings/invites", { method: "POST", body: JSON.stringify(input) }),
+  revokeInvite: (id: string) => req<null>(`/settings/invites/${id}`, { method: "DELETE" }),
+  previewInvite: (token: string) => req<InvitePreview>(`/auth/invite?token=${encodeURIComponent(token)}`),
+  acceptInvite: (input: { token: string; password: string; name?: string }) =>
+    req<Principal>("/auth/accept-invite", { method: "POST", body: JSON.stringify(input) }),
+
   syncCall: (callId: string) =>
     req<{ call_id: string; normalized_status: string | null; vendor_status: string | null; hunar_call_id: string | null }>(
       `/calls/${callId}/sync`,
@@ -262,6 +270,14 @@ export type PeopleSearchResult = {
   candidates: ExternalCandidate[];
 };
 export type SettingsUser = { id: string; name: string | null; email: string; role: string };
+export type PendingInvite = {
+  id: string;
+  email: string;
+  name: string | null;
+  role: string;
+  created_at: string;
+  expires_at: string;
+};
 export type Settings = {
   org_name: string;
   is_admin: boolean;
@@ -269,7 +285,17 @@ export type Settings = {
   providers: ProviderOption[];
   live_calls_enabled: boolean;
   users: SettingsUser[];
+  invites: PendingInvite[];
 };
+export type InviteCreated = {
+  id: string;
+  email: string;
+  name: string | null;
+  role: string;
+  expires_at: string;
+  accept_url: string;
+};
+export type InvitePreview = { org_name: string; email: string; role: string };
 export type SettingsUpdate = {
   default_provider?: string | null;
   live_calls_enabled?: boolean;

@@ -19,8 +19,15 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const { me, loading, logout } = useAuth();
   const pathname = usePathname() || "/";
 
+  // Public routes render outside the authenticated shell (e.g. accepting an invite while
+  // logged out). Everything else requires a session.
+  const isPublic = pathname.startsWith("/accept-invite");
+
   if (loading) {
     return <div className="shell-loading">Loading…</div>;
+  }
+  if (isPublic) {
+    return <>{children}</>;
   }
   if (!me) {
     return <AuthScreen />;

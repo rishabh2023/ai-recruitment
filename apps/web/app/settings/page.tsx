@@ -15,6 +15,14 @@ export default function SettingsPage() {
   const [liveCalls, setLiveCalls] = useState(false);
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
 
+  // invite form
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [inviteRole, setInviteRole] = useState("recruiter");
+  const [inviting, setInviting] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
   const load = useCallback(async () => {
     try {
       const data = await api.getSettings();
@@ -56,10 +64,56 @@ export default function SettingsPage() {
     }
   }
 
+  async function sendInvite() {
+    if (!inviteEmail.trim()) return;
+    setInviting(true);
+    setError(null);
+    setFlash(null);
+    setInviteLink(null);
+    setCopied(false);
+    try {
+      const inv = await api.createInvite({ email: inviteEmail.trim(), role: inviteRole, name: inviteName.trim() || undefined });
+      setInviteLink(inv.accept_url);
+      setFlash(`Invite created for ${inv.email}. Copy the link below and share it with them.`);
+      setInviteEmail("");
+      setInviteName("");
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setInviting(false);
+    }
+  }
+
+  async function revoke(id: string) {
+    setError(null);
+    try {
+      await api.revokeInvite(id);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function copyLink() {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  }
+
   if (loading) return <main className="container">Loading…</main>;
   if (!s) return <main className="container"><p className="error">{error}</p></main>;
 
   const admin = s.is_admin;
+  const ROLES = [
+    { key: "recruiter", label: "Recruiter" },
+    { key: "hiring_manager", label: "Hiring Manager" },
+    { key: "admin", label: "Admin" },
+  ];
 
   return (
     <main className="container settings-page">
@@ -165,7 +219,55 @@ export default function SettingsPage() {
             ))}
           </tbody>
         </table>
-        {admin && <p className="muted" style={{ fontSize: 13, marginTop: 10 }}>Inviting teammates is coming next.</p>}
+        {admin && (
+          <div className="settings-invite">
+            <h3>Invite a teammate</h3>
+            <div className="settings-invite-form">
+              <label className="settings-inline" style={{ flex: 2 }}>
+                <span className="field-label">Email</span>
+                <input type="email" placeholder="teammate@company.com" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
+              </label>
+              <label className="settings-inline">
+                <span className="field-label">Name (optional)</span>
+                <input placeholder="Full name" value={inviteName} onChange={(e) => setInviteName(e.target.value)} />
+              </label>
+              <label className="settings-inline">
+                <span className="field-label">Role</span>
+                <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
+                  {ROLES.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
+                </select>
+              </label>
+              <button disabled={inviting || !inviteEmail.trim()} onClick={sendInvite}>
+                {inviting ? "Creating…" : "Create invite"}
+              </button>
+            </div>
+
+            {inviteLink && (
+              <div className="settings-invite-link">
+                <span className="field-label">Share this one-time link (shown once)</span>
+                <div className="row" style={{ gap: 8 }}>
+                  <input readOnly value={inviteLink} onFocus={(e) => e.currentTarget.select()} />
+                  <button className="secondary" onClick={copyLink}>{copied ? "Copied ✓" : "Copy"}</button>
+                </div>
+              </div>
+            )}
+
+            {s.invites.length > 0 && (
+              <div className="settings-pending">
+                <span className="field-label">Pending invites</span>
+                {s.invites.map((i) => (
+                  <div className="settings-pending-row" key={i.id}>
+                    <div>
+                      <strong>{i.email}</strong> <span className="badge">{i.role}</span>
+                      <div className="muted" style={{ fontSize: 12 }}>Expires {new Date(i.expires_at).toLocaleDateString()}</div>
+                    </div>
+                    <button className="linklike" onClick={() => revoke(i.id)}>Revoke</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </section>
     </main>
   );

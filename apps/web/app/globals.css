@@ -236,3 +236,13 @@ ul.activity time { font-size: 12px; white-space: nowrap; }
 .settings-inline { margin: 0; max-width: 320px; flex: 1; }
 .settings-team { width: 100%; margin-top: 4px; }
 @media (max-width: 760px) { .settings-page { padding: 24px 16px 42px; } .settings-provider { align-items: stretch; } }
+/* --- Settings: team invites --- */
+.settings-invite { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 16px; }
+.settings-invite h3 { margin: 0 0 10px; font-size: 15px; }
+.settings-invite-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.settings-invite-form .settings-inline { min-width: 150px; }
+.settings-invite-link { margin-top: 14px; padding: 12px; background: #0f1117; border: 1px solid var(--accent); border-radius: 10px; }
+.settings-invite-link input { font-family: ui-monospace, monospace; font-size: 12px; }
+.settings-pending { margin-top: 16px; display: grid; gap: 8px; }
+.settings-pending-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; background: #0f1117; border: 1px solid var(--border); border-radius: 10px; }
+.invite-summary { background: #0f1117; border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 14px; }

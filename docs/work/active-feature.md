@@ -39,6 +39,25 @@ This file is the resume point for any agent. Keep it current.
   422. **Full suite 83 passed.** Web typecheck + production build pass. Browser-verified end
   to end on localhost:3000: login → Sourcing → JD-prefill → search (sample notice) → empty
   state → broaden → 9 results → select all → "7 added · 2 skipped (already in pipeline)".
+## Team invites (Settings), done this session
+
+- **Invite flow:** new `user_invites` table (migration `d3e4f5a6b7c8`) + `invites.py` service.
+  Admin creates an invite (email + role) → gets a **one-time accept link** (token shown once,
+  stored only as a hash); the invitee opens it, sets a password, and joins — no email sending
+  (admin shares the link), matching assignment scope. Endpoints: `POST /settings/invites`
+  (admin), `DELETE /settings/invites/{id}` (admin, revoke), `GET /auth/invite?token=` (public
+  preview), `POST /auth/accept-invite` (public → creates user + logs in). `GET /settings` now
+  includes pending invites. Roles: recruiter | hiring_manager | admin.
+- **Web:** Settings → Team shows the roster + an invite form + copyable one-time link +
+  pending-invite list with Revoke. New public `/accept-invite` page (bypasses the auth shell)
+  previews the invite and lets the invitee set a password to join. `config.web_base_url` builds
+  the link.
+- **MCP:** `invite_teammate` + `revoke_invite` tools (31 tools total).
+- **Verified:** `tests/test_settings.py` +3 (create/list/revoke/accept, admin-gate + validation,
+  invalid token). **Full suite 94 passed.** Browser-verified end to end: created an invite,
+  accept page renders "invited to Demo Org as recruiter", accepted teammate appears on the team
+  as hiring_manager, pending invite shows with Revoke.
+
 ## MCP server (conversational access), done this session
 
 - **`apps/mcp/`** — a Model Context Protocol server exposing the platform as **27 tools** so it

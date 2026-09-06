@@ -85,3 +85,52 @@ def test_org_provider_key_makes_sourcing_configured(client):
     prov = client.get(f"/jobs/{jid}/sourcing/providers").json()
     apollo = next(p for p in prov["providers"] if p["key"] == "apollo")
     assert apollo["configured"] is True and prov["default"] == "apollo"
+
+
+def test_invite_create_list_revoke_and_accept(client):
+    _signup_admin(client, email="boss@acme.test")
+    # Create an invite.
+    r = client.post("/settings/invites", json={"email": "New Hire@Acme.test", "role": "recruiter", "name": "New Hire"})
+    assert r.status_code == 201, r.text
+    inv = r.json()
+    assert inv["email"] == "new hire@acme.test"  # normalized
+    assert "accept-invite?token=" in inv["accept_url"]
+    token = inv["accept_url"].split("token=")[1]
+
+    # It shows up as pending in settings.
+    assert any(i["email"] == "new hire@acme.test" for i in client.get("/settings").json()["invites"])
+
+    # Preview (public) works.
+    prev = client.get(f"/auth/invite?token={token}")
+    assert prev.status_code == 200 and prev.json()["role"] == "recruiter"
+
+    # Accept in a separate client (no admin cookie) → becomes a logged-in recruiter.
+    with TestClient(app) as c2:
+        acc = c2.post("/auth/accept-invite", json={"token": token, "password": "newpass1"})
+        assert acc.status_code == 201, acc.text
+        assert acc.json()["role"] == "recruiter" and acc.json()["email"] == "new hire@acme.test"
+        assert c2.get("/auth/me").json()["email"] == "new hire@acme.test"
+
+    # Used token can't be reused, and the invite is no longer pending.
+    assert client.get(f"/auth/invite?token={token}").status_code == 404
+    assert not any(i["email"] == "new hire@acme.test" for i in client.get("/settings").json()["invites"])
+    # The new user appears on the team.
+    assert any(u["email"] == "new hire@acme.test" and u["role"] == "recruiter" for u in client.get("/settings").json()["users"])
+
+
+def test_invite_admin_only_and_validation(client):
+    # non-admin cannot invite
+    client.post("/dev/bootstrap", json={"org_name": "Cee", "user_email": "rec@cee.test", "password": "pw-123456"})
+    client.post("/auth/login", json={"email": "rec@cee.test", "password": "pw-123456"})
+    assert client.post("/settings/invites", json={"email": "x@cee.test"}).status_code == 403
+
+    # admin: inviting an existing email is rejected
+    _signup_admin(client, email="own@dee.test")
+    assert client.post("/settings/invites", json={"email": "own@dee.test"}).status_code == 422
+    # bad role rejected
+    assert client.post("/settings/invites", json={"email": "z@dee.test", "role": "wizard"}).status_code == 422
+
+
+def test_accept_invalid_token(client):
+    with TestClient(app) as c2:
+        assert c2.post("/auth/accept-invite", json={"token": "nope", "password": "secret1"}).status_code == 422

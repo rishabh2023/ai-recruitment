@@ -310,6 +310,15 @@ class SettingsUserOut(BaseModel):
     role: str
 
 
+class PendingInviteOut(BaseModel):
+    id: UUID
+    email: str
+    name: str | None
+    role: str
+    created_at: datetime
+    expires_at: datetime
+
+
 class SettingsOut(BaseModel):
     org_name: str
     is_admin: bool  # whether the current user may edit settings
@@ -317,6 +326,34 @@ class SettingsOut(BaseModel):
     providers: list[ProviderOption]  # configured reflects org keys + env
     live_calls_enabled: bool
     users: list[SettingsUserOut]
+    invites: list[PendingInviteOut]  # pending team invitations
+
+
+class InviteCreateIn(BaseModel):
+    email: str
+    role: str = "recruiter"  # recruiter | hiring_manager | admin
+    name: str | None = None
+
+
+class InviteCreatedOut(BaseModel):
+    id: UUID
+    email: str
+    name: str | None
+    role: str
+    expires_at: datetime
+    accept_url: str  # one-time link (contains the token) — shown once, share with the invitee
+
+
+class InvitePreviewOut(BaseModel):
+    org_name: str
+    email: str
+    role: str
+
+
+class AcceptInviteIn(BaseModel):
+    token: str
+    password: str
+    name: str | None = None
 
 
 class SettingsUpdateIn(BaseModel):

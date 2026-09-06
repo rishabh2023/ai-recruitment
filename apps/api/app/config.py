@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://recruitment:recruitment@localhost:5432/recruitment"
     redis_url: str = "redis://localhost:6379/0"
     cors_origins: str = "http://localhost:3000"
+    # Public URL of the web app — used to build invite accept links.
+    web_base_url: str = "http://localhost:3000"
 
     # Hunar voice AI (single provider).
     hunar_api_key: str = ""
