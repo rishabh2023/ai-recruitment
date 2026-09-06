@@ -12,6 +12,17 @@ This file is the resume point for any agent. Keep it current.
 - **Status:** Phases 0–3 + auth + candidate/timeline UI + dashboard + JD PDF + Claude LLM
   done. **66 API/py tests pass**; web builds + typechecks. Verified in-browser end to end.
 
+## Job hub — workflow + pipeline UI (done this session)
+
+- `GET /jobs/{id}/workflow` returns the effective workflow (approved else latest draft) with
+  full stage detail (purpose, execution_type, information_requirements, requires_human_approval,
+  weighted criteria). New page `/jobs/[id]`: the **hiring workflow** as a connected stage flow
+  (exec-type badges, "collects" chips, criteria + weights) and a **pipeline board** (columns =
+  stages, cards = candidates in their current stage). Jobs list + dashboard link to this hub.
+- Still POC-ish / next for "full product": in-UI stage & criteria **editing** (currently the
+  draft is auto-generated then read-only), calling-window/language config UI, and
+  decision/approval actions on NEEDS_REVIEW candidates (advance/reject with audited outcome).
+
 ## JD PDF upload + Claude Haiku extraction — done this session
 
 - **JD from PDF:** `POST /jobs/{job_id}/versions/upload` (multipart) extracts text with `pypdf`
