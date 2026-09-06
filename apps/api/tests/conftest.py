@@ -14,10 +14,18 @@ from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db.base import Base
 from app.modules import registry
 
 registry.import_models()  # populate Base.metadata with all tables
+
+
+@pytest.fixture(autouse=True)
+def _force_stub_llm(monkeypatch):
+    """Keep the suite hermetic: always use the deterministic stub LLM, never a real Claude call,
+    even when a PLATFORM_LLM_API_KEY is present in the environment or .env."""
+    monkeypatch.setattr(settings, "platform_llm_api_key", "", raising=False)
 
 
 def _url() -> str:

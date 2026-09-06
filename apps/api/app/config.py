@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Load env from the repo root .env (base) and an optional apps/api/.env (per-service override),
+# regardless of the current working directory. Real environment variables still take precedence
+# over both, so exported vars (CI, Docker, tests) win. config.py lives at apps/api/app/config.py.
+_APP_DIR = Path(__file__).resolve()
+_ROOT_ENV = _APP_DIR.parents[3] / ".env"   # repository root
+_API_ENV = _APP_DIR.parents[1] / ".env"    # apps/api/.env (optional local override)
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=(str(_ROOT_ENV), str(_API_ENV)), extra="ignore")
 
     database_url: str = "postgresql://recruitment:recruitment@localhost:5432/recruitment"
     hunar_webhook_signing_key: str = ""
