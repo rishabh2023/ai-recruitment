@@ -138,6 +138,25 @@ ul.activity li { display: flex; justify-content: space-between; gap: 12px; font-
 ul.activity li:last-child { border-bottom: none; padding-bottom: 0; }
 ul.activity time { font-size: 12px; white-space: nowrap; }
 
+/* Workflow stage flow */
+.stage-flow { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; align-items: stretch; }
+.stage-flow-item { display: flex; align-items: center; gap: 8px; }
+.stage-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px; width: 260px; flex-shrink: 0; }
+.stage-arrow { color: var(--muted); font-size: 20px; flex-shrink: 0; }
+.badge.exec-ai { color: var(--accent); border-color: var(--accent); }
+.badge.exec-human { color: var(--warn); border-color: var(--warn); }
+.badge.exec-system { color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.chip { font-size: 11px; padding: 2px 8px; border-radius: 6px; background: #0f1117; border: 1px solid var(--border); color: var(--text); }
+
+/* Pipeline board */
+.board { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 8px; }
+.board-col { width: 200px; flex-shrink: 0; background: #0f1117; border: 1px solid var(--border); border-radius: 10px; padding: 8px; }
+.board-col-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; padding: 4px 6px 8px; }
+.board-col-head .count { color: var(--muted); font-weight: 400; background: var(--panel); border-radius: 999px; padding: 0 8px; font-size: 12px; }
+.pcard { display: block; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 8px; color: inherit; }
+.pcard:hover { border-color: var(--accent); }
+
 /* File upload dropzone */
 .filedrop {
   display: flex; align-items: center; gap: 10px; cursor: pointer;

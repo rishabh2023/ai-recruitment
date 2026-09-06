@@ -30,11 +30,11 @@ export default function JobsPage() {
         </div>
       ) : (
         jobs.map((j) => (
-          <Link className="card cardlink" key={j.id} href={`/jobs/${j.id}/candidates`}>
+          <Link className="card cardlink" key={j.id} href={`/jobs/${j.id}`}>
             <div className="row" style={{ justifyContent: "space-between" }}>
               <div>
                 <div style={{ fontWeight: 600 }}>{j.title}</div>
-                <div className="muted" style={{ fontSize: 13 }}>View candidates →</div>
+                <div className="muted" style={{ fontSize: 13 }}>View workflow & pipeline →</div>
               </div>
               <span className={`badge ${j.status}`}>{j.status}</span>
             </div>

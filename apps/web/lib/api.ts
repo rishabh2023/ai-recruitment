@@ -96,6 +96,7 @@ export const api = {
     req<WorkflowVersion>(`/jobs/${jobId}/workflow/draft`, { method: "POST" }),
   listStages: (jobId: string, vid: string) =>
     req<Stage[]>(`/jobs/${jobId}/workflow/versions/${vid}/stages`),
+  getJobWorkflow: (jobId: string) => req<JobWorkflow>(`/jobs/${jobId}/workflow`),
   approveWorkflow: (jobId: string, vid: string) =>
     req<WorkflowVersion>(`/jobs/${jobId}/workflow/versions/${vid}/approve`, { method: "POST" }),
   activateJob: (jobId: string) => req<Job>(`/jobs/${jobId}/activate`, { method: "POST" }),
@@ -123,6 +124,23 @@ export type Job = { id: string; title: string; status: string; created_at: strin
 export type JobVersion = { id: string; version: number; confirmed: boolean; extracted: Record<string, unknown> };
 export type WorkflowVersion = { id: string; version: number; approved: boolean };
 export type Stage = { id: string; stage_order: number; name: string; execution_type: string };
+export type Criterion = { name: string; kind: string; weight: number | null };
+export type StageDetail = {
+  id: string;
+  stage_order: number;
+  name: string;
+  purpose: string | null;
+  execution_type: string;
+  information_requirements: string[];
+  requires_human_approval: boolean;
+  criteria: Criterion[];
+};
+export type JobWorkflow = {
+  version_id: string;
+  version: number;
+  approved: boolean;
+  stages: StageDetail[];
+};
 
 export type CandidateSummary = {
   id: string;

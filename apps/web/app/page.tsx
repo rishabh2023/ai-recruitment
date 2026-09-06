@@ -91,7 +91,7 @@ export default function Dashboard() {
           </div>
         ) : (
           jobs.slice(0, 5).map((j) => (
-            <Link className="card cardlink" key={j.id} href={`/jobs/${j.id}/candidates`}>
+            <Link className="card cardlink" key={j.id} href={`/jobs/${j.id}`}>
               <div className="row" style={{ justifyContent: "space-between" }}>
                 <span style={{ fontWeight: 600 }}>{j.title}</span>
                 <span className={`badge ${j.status}`}>{j.status}</span>

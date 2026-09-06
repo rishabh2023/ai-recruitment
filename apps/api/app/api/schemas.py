@@ -100,6 +100,30 @@ class StageOut(ORMModel):
     execution_type: str
 
 
+class CriterionOut(BaseModel):
+    name: str
+    kind: str
+    weight: float | None
+
+
+class StageDetailOut(BaseModel):
+    id: UUID
+    stage_order: int
+    name: str
+    purpose: str | None
+    execution_type: str
+    information_requirements: list[str]
+    requires_human_approval: bool
+    criteria: list[CriterionOut]
+
+
+class JobWorkflowOut(BaseModel):
+    version_id: UUID
+    version: int
+    approved: bool
+    stages: list[StageDetailOut]
+
+
 # --- candidates ---
 class CandidateImportIn(BaseModel):
     full_name: str

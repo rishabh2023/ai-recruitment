@@ -68,6 +68,13 @@ def test_full_flow(client):
     act = client.post(f"/jobs/{jid}/activate", headers=h).json()
     assert act["status"] == "active"
 
+    # rich workflow view: approved, ordered stages with detail + criteria
+    wfd = client.get(f"/jobs/{jid}/workflow", headers=h).json()
+    assert wfd["approved"] is True
+    assert wfd["stages"][0]["stage_order"] == 1
+    assert "execution_type" in wfd["stages"][0]
+    assert any(st["criteria"] for st in wfd["stages"])  # at least one stage has criteria
+
     jc = client.post(
         f"/jobs/{jid}/candidates",
         json={"full_name": "Asha", "phone": "+919999999999", "known_facts": {"location": "Bengaluru"}},
