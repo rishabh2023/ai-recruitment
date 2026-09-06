@@ -214,6 +214,57 @@ def import_candidate(
 
 
 @mcp.tool()
+def import_and_interview(job_id: str, candidates: list[dict], launch: bool = True) -> dict:
+    """One-shot Flow A: import existing candidates into a job and (optionally) launch each one's
+    AI interview stage.
+
+    `candidates` is a list of dicts with at least `full_name`; optional `phone`, `email`,
+    `location`, and `known_facts` (a {field: value} map of already-known info, e.g.
+    {"expected_ctc": "24 LPA"}, carried into the interview as context so it isn't re-asked).
+
+    Convenience macro over import_candidate → launch_stage. Resilient: a per-candidate import
+    or launch failure is captured in that candidate's result without aborting the rest. Launch
+    needs a phone and an AI first stage; a real Hunar call is placed only when live calling is
+    enabled (otherwise the interview is queued). Nothing bypasses platform gates."""
+    if not candidates:
+        raise ApiError("Provide at least one candidate to import.")
+    results: list[dict] = []
+    for c in candidates:
+        name = (c.get("full_name") or "").strip()
+        step: dict[str, Any] = {"name": name or None, "imported": None, "job_candidate_id": None, "interview": None}
+        if not name:
+            step["imported"] = False
+            step["import_error"] = "full_name is required."
+            results.append(step)
+            continue
+        try:
+            jc = _call("POST", f"/jobs/{job_id}/candidates", json={
+                "full_name": name, "phone": c.get("phone"), "email": c.get("email"),
+                "location": c.get("location"), "source": "import",
+                "known_facts": c.get("known_facts") or {},
+            })
+            step["imported"] = True
+            step["job_candidate_id"] = jc.get("id")
+        except ApiError as exc:
+            step["imported"] = False
+            step["import_error"] = str(exc)
+            results.append(step)
+            continue
+        if launch:
+            if not c.get("phone"):
+                step["interview"] = {"skipped": "no phone number to place an interview call"}
+            else:
+                try:
+                    r = _call("POST", f"/job-candidates/{step['job_candidate_id']}/launch")
+                    step["interview"] = {"dispatched": r.get("dispatched"), "status": r.get("normalized_status")}
+                except ApiError as exc:
+                    step["interview"] = {"error": str(exc)}
+        results.append(step)
+    imported = sum(1 for r in results if r["imported"])
+    return {"imported": imported, "failed": len(results) - imported, "candidates": results}
+
+
+@mcp.tool()
 def candidate_timeline(job_candidate_id: str) -> dict:
     """Full candidate workflow/timeline: profile, stage runs, call attempts, and collected
     facts/evidence."""

@@ -53,6 +53,10 @@ This file is the resume point for any agent. Keep it current.
 - **SDK note:** built on `mcp` **2.x** (`from mcp.server.mcpserver import MCPServer` — FastMCP
   was renamed). Its own venv `apps/mcp/.venv` (git-ignored). Root **`.mcp.json`** registers it
   for Claude Code in this repo. See `apps/mcp/README.md`.
+- **Macro tools (one-shot journeys):** `source_and_outreach` (Flow B: search → add top N →
+  enrich → launch outreach) and `import_and_interview` (Flow A: import existing candidates →
+  launch interview). Both are resilient (per-candidate failure captured, others continue) and
+  never bypass gates. **29 tools total.**
 - **Verified live** (backend on :8000, demo admin): `whoami`, `dashboard_summary`,
   `create_job` + `add_job_description` (JD extracted), `list_people_search_providers`
   (apollo+pdl configured), and a **real PDL `people_search` → `add_sourced_candidates`**
