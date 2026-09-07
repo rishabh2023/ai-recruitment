@@ -22,19 +22,37 @@ const STEPS = [
   { icon: "rocket", title: "Add candidates & hire with confidence", body: "Source or import people, run AI screening calls, and move the best forward on evidence." },
 ];
 
+// In-memory cache of the last successful dashboard load, scoped to the signed-in user.
+// It survives client-side navigation (Dashboard → Jobs → back) within the SPA session, so
+// returning renders the last data instantly and revalidates in the background instead of
+// flashing the full-page "Loading…" state on every re-entry. Scoped by user id so a different
+// account (after logout/login in the same tab, no full reload) never sees stale data.
+let dashboardCache: { userId: string; summary: DashboardSummary; jobs: Job[] } | null = null;
+
 export default function Dashboard() {
   const { me } = useAuth();
-  const [summary, setSummary] = useState<DashboardSummary | null>(null);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cached = me && dashboardCache?.userId === me.user_id ? dashboardCache : null;
+  const [summary, setSummary] = useState<DashboardSummary | null>(cached?.summary ?? null);
+  const [jobs, setJobs] = useState<Job[]>(cached?.jobs ?? []);
+  // Only block the whole page on the very first load (no cache yet). On return visits we
+  // already have data to show, so revalidation happens silently.
+  const [loading, setLoading] = useState(!cached);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     Promise.all([api.dashboardSummary(), api.listJobs()])
-      .then(([s, j]) => { setSummary(s); setJobs(j); })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, []);
+      .then(([s, j]) => {
+        if (cancelled) return;
+        if (me) dashboardCache = { userId: me.user_id, summary: s, jobs: j };
+        setSummary(s);
+        setJobs(j);
+        setError(null);
+      })
+      .catch((e) => { if (!cancelled) setError(e.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [me]);
 
   if (loading) return <main className="container">Loading…</main>;
 
