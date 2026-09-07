@@ -21,8 +21,8 @@ without a redeploy.
 - Detect an expired/invalid key (HTTP 401/403) distinctly from a transient network failure.
 - Let an admin paste a **new live key** that takes effect immediately (no redeploy), validated
   against Hunar **before** it is accepted.
-- `.env` remains the durable default. The pasted key is a hot **Redis** override that keeps the
-  system running until the server env is updated properly.
+- `.env` remains a fallback default. The pasted key is stored **durably in the DB** (a global
+  config row) so it survives a Redis flush/restart; only the health result is cached in Redis.
 
 ## Non-goals
 
@@ -31,35 +31,49 @@ without a redeploy.
 - Not changing the live-calls safety switch (`hunar_live_calls_enabled`); a valid key can exist
   while calling is paused. The two are independent.
 - No automatic key rotation or secret-manager integration.
-- The override is intentionally ephemeral (Redis); durable storage stays in `.env`.
 
 ## Key resolution (the core change)
 
-Resolution order becomes: **Redis override → `.env` key**.
+Resolution order becomes: **DB override → `.env` key**.
 
-- `HunarClient.from_settings(...)` is supplemented by a resolver that first reads the Redis
-  override key, falling back to `settings.hunar_api_key`.
-- Redis key: `hunar:key_override` — the pasted live key. No expiry (or a long TTL, e.g. 30d).
-- If Redis is flushed/restarted, resolution silently falls back to `.env`. The UI labels a
-  pasted key as "temporary until the server env is updated" so a reset is not surprising.
+- `HunarClient.from_settings(...)` is supplemented by a resolver that first reads the DB
+  override, falling back to `settings.hunar_api_key`.
+- The override is a single global config row (see below). It is durable — it survives Redis
+  flushes and app restarts. Only the health *result* is cached in Redis.
+- If no override is set, resolution falls back to the `.env` key.
 
 ## Backend
 
-### Redis helper
+### DB — global config row (durable key override)
+
+Everything today is per-org; the Hunar key is global. Add a small **global** single-row config
+store rather than overloading `OrgSettings`:
+
+- New table `app_config` (module placement decided in plan; likely a new tiny `app/modules/
+  platform/` or under `organizations`) — a key/value row store, e.g. columns
+  `(key text primary key, value text, updated_at, updated_by)`. First use: row
+  `hunar_api_key`. The value column holds the secret; it is **never** returned to clients.
+- A migration adds the table (follow the per-module migration convention in `apps/api`).
+- Rationale for key/value over a dedicated column: future global settings reuse the same table
+  without another migration; keep it minimal (one known key for now).
+
+### Redis helper (health cache only)
 
 The API app has no shared Redis client yet (only `redis_url` in config + Celery broker use).
 Add a tiny module `app/redis_client.py` exposing a lazily-created `redis.Redis` from
-`settings.redis_url`, plus typed get/set/delete helpers for the two keys below. All Redis
-access is wrapped so a Redis outage degrades gracefully (treat override as absent, treat
-health cache as a miss) — never 500 because Redis is down.
+`settings.redis_url`, plus typed get/set/delete helpers for the health cache key. All Redis
+access is wrapped so a Redis outage degrades gracefully (treat the health cache as a miss —
+recompute live) — never 500 because Redis is down. The key override does **not** depend on
+Redis; it lives in the DB.
 
 ### Hunar key store + health service
 
 New module `app/integrations/hunar/keystore.py` (or `app/modules/... ` — placement decided in
 plan) providing:
 
-- `resolve_api_key() -> tuple[str, source]` where `source ∈ {"override", "env", None}`.
-- `set_override(key: str) -> None` / `clear_override() -> None`.
+- `resolve_api_key(session) -> tuple[str, source]` where `source ∈ {"override", "env", None}`.
+- `set_override(session, key: str) -> None` / `clear_override(session) -> None` — write/delete
+  the `hunar_api_key` row in `app_config`.
 - `check_health(*, refresh: bool=False) -> HunarHealth` — returns a cached result unless
   `refresh`. Health is computed by calling the lightweight verified read `GET /numbers/` via
   `HunarClient.list_numbers()`:
@@ -84,7 +98,8 @@ plan) providing:
   1. Reject empty/whitespace with `validation_error` (422).
   2. Validate the candidate key with a live `GET /numbers/` using a throwaway `HunarClient`
      built from the candidate key.
-  3. On success → store override in Redis, bust `hunar:health`, write an audit event
+  3. On success → store override in the DB (`app_config.hunar_api_key`), bust `hunar:health`,
+     write an audit event
      (`hunar.key.updated`, actor + source, **never the key value**), return the fresh
      `HunarHealth` (`healthy`, source `override`).
   4. On 401/403 → `validation_error` (422) "That key was rejected by the voice-AI provider."
@@ -127,7 +142,7 @@ When status is `invalid` / `unconfigured` and the user is an **admin**, the badg
 - Single password field "Paste new live key from the voice-AI provider".
 - Submit → `updateHunarKey(...)`. On success the modal closes and the badge flips to green.
 - On rejection (422) show the server message inline; key not saved.
-- Copy notes the key is "temporary until the server environment is updated".
+- The key is saved durably; no "temporary" caveat needed.
 
 Non-admins see the status only, with helper text "Ask an admin to update the voice-AI key."
 Admin-ness comes from the existing settings signal (`is_admin`) — reuse it (e.g. fetch
@@ -144,12 +159,14 @@ loading, healthy, invalid (admin can fix / non-admin informed), unconfigured, un
 - **Backend (mock Hunar `GET /numbers/`, never dial):**
   - health = `healthy` on 2xx; `invalid` on 401/403; `unreachable` on transport error;
     `unconfigured` when no key set.
-  - resolution prefers Redis override over env; falls back to env when override absent.
+  - resolution prefers DB override over env; falls back to env when override absent.
+  - the DB override persists across a simulated Redis flush (health cache cleared, override
+    still resolves from DB).
   - health result is cached; `refresh=1` forces a re-check.
-  - `PUT /hunar/key`: admin validates-then-saves; rejects invalid key without saving; rejects
-    empty; forbidden for non-admin; busts the cache on success; audit event written without the
-    key value.
-  - Redis-down: health degrades to a miss / override treated absent, no 500.
+  - `PUT /hunar/key`: admin validates-then-saves to DB; rejects invalid key without saving;
+    rejects empty; forbidden for non-admin; busts the cache on success; audit event written
+    without the key value.
+  - Redis-down: health degrades to a miss (recomputed live), no 500; override still resolves.
 - **Frontend:** badge renders each status; admin sees "Update key", non-admin does not; modal
   success flips to green; modal error shows inline.
 
@@ -159,10 +176,12 @@ loading, healthy, invalid (admin can fix / non-admin informed), unconfigured, un
 - `docs/interfaces.md` — document `GET /hunar/health` and `PUT /hunar/key`.
 - `docs/features/` — add/extend a Hunar feature brief; update
   `docs/work/active-feature.md` handoff.
-- `.env.example` — no new var (override is runtime Redis), but note the health/re-key behavior.
+- `.env.example` — no new var (override is a durable DB row), but note the health/re-key
+  behavior.
 
 ## Open questions (resolved)
 
-- Storage: **Redis override + Redis health cache** (user decision; `.env` stays default).
+- Storage: **key override in DB (durable, global) + health cache in Redis** (user decision;
+  `.env` stays the fallback).
 - Scope: **global** (user decision).
 - Check method: **lightweight `GET /numbers/`** (user decision).
