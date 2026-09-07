@@ -155,6 +155,17 @@ Per-call context is passed via `custom_data` (verified), so the stage-driven mod
 job/stage agent and injects candidate/stage context at call time rather than provisioning
 per-candidate agents (see ADR-0002).
 
+### Voice-AI (Hunar) health & key
+
+- `GET /hunar/health` — any authenticated user. `{ status, source, checked_at }` where
+  `status ∈ {healthy, invalid, unconfigured, unreachable}` and `source ∈ {override, env, null}`.
+  Result cached ~60s in Redis; `?refresh=1` forces a live probe (`GET /numbers/`). Never
+  returns the key.
+- `PUT /hunar/key` — admin only. Body `{ api_key }`. Validates the key against Hunar before
+  saving it durably (global `app_config` row); 401/403 → 422 (rejected, not saved), transport
+  error → 502 (not saved). On success busts the health cache and audit-logs `hunar.key.updated`
+  (never the key value). Resolution order for the effective key: DB override → `.env`.
+
 ## People-search adapter boundary (multi-provider)
 
 People search is **provider-agnostic** — **four real providers are implemented**: Apollo.io,

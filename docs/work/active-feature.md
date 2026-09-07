@@ -2,6 +2,34 @@
 
 This file is the resume point for any agent. Keep it current.
 
+## Hunar voice-AI key health check + in-app admin re-key — done this session
+
+- **Global durable key override:** new `app_config` DB table (migration `f8a1c2d3e4b5`,
+  down_revision `e7c1d2f3a4b5`) holds a global (non-org-scoped) Hunar API key override. Key
+  resolution is DB override → `.env` (`app/integrations/hunar/keystore.py`).
+- **Health probe:** `GET /numbers/` (already `VERIFIED` in the vendor matrix) doubles as the
+  key-validity/health probe — 2xx → valid, 401/403 → invalid, transport error → unreachable.
+  Result cached ~60s in Redis (`app/redis_client.py`); cache is disposable, the key override is
+  durable in Postgres.
+- **Endpoints:** `GET /hunar/health` (any authenticated user) → `{status, source, checked_at}`,
+  `?refresh=1` forces a live probe, never returns the key. `PUT /hunar/key` (admin only) —
+  validates the key against Hunar **before** saving, audit-logs `hunar.key.updated` (never the
+  key value), and busts the health cache on success. See `docs/interfaces.md` (Voice-AI (Hunar)
+  health & key) and `docs/vendor-capability-matrix.md` for the endpoint/probe contract.
+- **Web:** sidebar `HunarHealthBadge` (product language "Voice AI") + an admin-only re-key modal,
+  wired into `apps/web/components/AppShell.tsx`; web API client gained the corresponding methods.
+- **Verification:** backend `pytest tests/test_hunar_keystore.py tests/test_hunar_health_api.py`
+  → **15 passed**; full backend suite **154 passed**. Web `tsc --noEmit` + `npm run build` clean.
+  Browser-verified on localhost:3000: badge shows "Voice AI connected" (green) for an admin,
+  after rebuilding the Docker API (`docker compose up -d --build api`, which ran the new
+  migration).
+- **Remaining / risks:** Redis holds only the disposable health cache — the key override itself
+  is durable in the DB. A valid Hunar account key in `.env` (or an in-app override) is required
+  to actually see "healthy" live. The live-calls toggle (`HUNAR_LIVE_CALLS_ENABLED`) is
+  independent of key health — a healthy key does not by itself enable live dialing.
+- **Branch:** `feat/hunar-key-health`. **Exact next action:** final whole-branch code review of
+  `feat/hunar-key-health`, then open a PR / merge.
+
 ## Pipeline scale, CSV import, JD polish, sourcing recall, dedup — done this session
 
 Backend (`apps/api`, all green — 143 tests):

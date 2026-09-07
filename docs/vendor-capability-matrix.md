@@ -41,6 +41,7 @@ Base URL (verified): `https://api.voice.hunar.ai/external/v1`. Auth: `X-API-Key`
 | Calling window / guardrails (native) | `VERIFIED` | `[docs]` `[openapi]` | `guardrails`: `allowed_days` (**min 3 distinct**), `earliest_call_time`/`last_call_time` (HH:MM, **min 3-hour window**), IANA `timezone`. Hunar enforces windows; platform coordinates cases outside these constraints. See ADR-0002. |
 | Recording / transcript behavior | `VERIFIED` (consume only) | `[docs]` `[openapi]` | `recording_url` on COMPLETED + `call_recording_done`. **No enable/disable toggle exposed** → no "record call" control; display only what is returned. |
 | BYO telephony | `UNSUPPORTED` (via API) | `[openapi]` | `numbers/` are org-provisioned (`telephony_provider_id`, `provider`); no BYO provisioning endpoint. Use Hunar-managed numbers only. |
+| Key health / validity probe | `VERIFIED` | `[live]` | The already-VERIFIED `GET /numbers/` doubles as a lightweight key-validity/health probe: 2xx → key valid, 401/403 → invalid/expired. Used by the platform's `GET /hunar/health` (cached ~60s) instead of a dedicated Hunar health endpoint, since none is documented. |
 
 ## People Search (multi-provider)
 
