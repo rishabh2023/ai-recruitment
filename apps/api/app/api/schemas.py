@@ -147,6 +147,35 @@ class StageOut(ORMModel):
     execution_type: str
 
 
+class StageAgentOut(BaseModel):
+    """The voice agent chosen for one AI stage (F-009). ``source`` tells the recruiter whether the
+    stage has its own bound agent or is falling back to the global default. ``objective`` and
+    ``collects`` describe, in product language, what the agent does — no telephony internals."""
+
+    stage_id: UUID
+    stage_name: str
+    execution_type: str
+    hunar_agent_id: str | None
+    source: str  # bound | default | unset
+    purpose_family: str  # screening | technical | sales | manager | compensation
+    stage_purpose: str | None
+    objective: str  # what the agent is trying to accomplish on the call
+    collects: list[str]  # plain-language list of what it will ask about
+    collect_keys: list[str]  # the underlying field keys (for editing)
+    editable: bool  # true when the stage has its own bound agent that can be edited
+
+
+class StageAgentOverrideIn(BaseModel):
+    hunar_agent_id: str
+
+
+class StageAgentSpecIn(BaseModel):
+    """Recruiter edit of what a stage's agent does."""
+
+    objective: str
+    collects: list[str]  # field keys to collect (e.g. interest, expected_ctc, notice_period)
+
+
 class CriterionOut(BaseModel):
     name: str
     kind: str
@@ -384,6 +413,9 @@ class TimelineOut(BaseModel):
     stage_runs: list[dict]
     calls: list[dict]
     facts: list[dict]
+    # Latest platform-LLM assessment of a completed call (recommendation, summary, per-criterion),
+    # or null when none has been produced yet.
+    assessment: dict | None = None
 
 
 class WebhookAck(BaseModel):

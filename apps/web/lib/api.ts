@@ -138,6 +138,22 @@ export const api = {
     }),
   approveWorkflow: (jobId: string, vid: string) =>
     req<WorkflowVersion>(`/jobs/${jobId}/workflow/versions/${vid}/approve`, { method: "POST" }),
+  // F-009: the voice agent chosen for each AI stage. The raw agent id is server-side only —
+  // recruiters see a readiness status (see `stageAgentStatus`), never Hunar internals.
+  listStageAgents: (jobId: string, vid: string) =>
+    req<StageAgent[]>(`/jobs/${jobId}/workflow/versions/${vid}/agents`),
+  provisionStageAgents: (jobId: string, vid: string) =>
+    req<StageAgent[]>(`/jobs/${jobId}/workflow/versions/${vid}/agents/provision`, { method: "POST" }),
+  overrideStageAgent: (jobId: string, stageId: string, hunarAgentId: string) =>
+    req<StageAgent>(`/jobs/${jobId}/workflow/stages/${stageId}/agent`, {
+      method: "PUT",
+      body: JSON.stringify({ hunar_agent_id: hunarAgentId }),
+    }),
+  editStageAgentSpec: (jobId: string, stageId: string, objective: string, collects: string[]) =>
+    req<StageAgent>(`/jobs/${jobId}/workflow/stages/${stageId}/agent/spec`, {
+      method: "PUT",
+      body: JSON.stringify({ objective, collects }),
+    }),
   activateJob: (jobId: string) => req<Job>(`/jobs/${jobId}/activate`, { method: "POST" }),
   archiveJob: (jobId: string) => req<Job>(`/jobs/${jobId}/archive`, { method: "POST" }),
   deleteJob: (jobId: string) => req<null>(`/jobs/${jobId}`, { method: "DELETE" }),
@@ -292,6 +308,29 @@ export type CallingPolicyInput = {
   language: string | null;
 };
 export type CallingPolicy = CallingPolicyInput & { id: string };
+// F-009 per-stage voice agent. `hunar_agent_id` is internal — never render it to recruiters;
+// derive a product-safe status with `stageAgentStatus` instead.
+export type StageAgent = {
+  stage_id: string;
+  stage_name: string;
+  execution_type: string;
+  hunar_agent_id: string | null;
+  source: "bound" | "default" | "unset";
+  purpose_family: string;
+  stage_purpose: string | null;
+  objective: string;
+  collects: string[];
+  collect_keys: string[];
+  editable: boolean;
+};
+
+/** Recruiter-safe readiness for a stage's voice agent, hiding all telephony internals. */
+export function stageAgentStatus(a: StageAgent): { label: string; ready: boolean; warn: boolean } {
+  if (a.source === "bound") return { label: "Voice agent ready", ready: true, warn: false };
+  if (a.source === "default") return { label: "Using default voice agent", ready: true, warn: true };
+  return { label: "No voice agent yet", ready: false, warn: true };
+}
+
 export type FunnelSummary = { id: string; name: string; version: number; stage_count: number; archived: boolean; created_at: string };
 export type FunnelStageSpec = {
   stage_order: number;
@@ -449,10 +488,19 @@ export type EnrichResult = {
   notice: string | null;
   pipeline_state: string | null;
 };
+export type AssessmentCriterion = { name: string; score: number | null; notes?: string };
+export type InterviewAssessment = {
+  recommendation: "strong" | "moderate" | "weak";
+  headline?: string;
+  summary?: string;
+  criteria?: AssessmentCriterion[];
+  engine?: string;
+};
 export type Timeline = {
   job_candidate: JobCandidateOut;
   candidate: CandidateSummary;
   stage_runs: StageRun[];
   calls: CallItem[];
   facts: Fact[];
+  assessment?: InterviewAssessment | null;
 };

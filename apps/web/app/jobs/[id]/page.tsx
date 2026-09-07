@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { api, type BulkLaunchResult, type CandidateImport, type CsvImportResult, type Funnel, type Job, type JobCandidateListItem, type JobVersion, type JobWorkflow, type PipelinePage, type StageDetail } from "@/lib/api";
+import { api, stageAgentStatus, type BulkLaunchResult, type CandidateImport, type CsvImportResult, type Funnel, type Job, type JobCandidateListItem, type JobVersion, type JobWorkflow, type PipelinePage, type StageAgent, type StageDetail } from "@/lib/api";
 import CallingPolicyCard from "@/components/CallingPolicyCard";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Modal from "@/components/Modal";
@@ -12,8 +12,25 @@ import WorkflowEditor, { stagesToEdit } from "@/components/WorkflowEditor";
 const EXEC: Record<string, string> = { ai: "AI call", human: "Human review", system: "System" };
 type Tab = "overview" | "workflow" | "pipeline" | "policy";
 
+/** Human label for an information-requirement key (e.g. "current_ctc" → "Current CTC"). */
+function fieldLabel(key: string): string {
+  const map: Record<string, string> = {
+    interest: "Interest in the role", current_ctc: "Current CTC", expected_ctc: "Expected CTC",
+    notice_period: "Notice period", location: "Location", years_experience: "Years of experience",
+    salary_expectation: "Salary expectation", availability: "Availability", skills: "Relevant skills",
+  };
+  return map[key] ?? key.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
 function StageCard({ stage }: { stage: StageDetail }) {
+  const isAi = stage.execution_type === "ai";
   return <article className="workspace-stage-card"><div className="workspace-stage-topline"><span className="stage-number">{String(stage.stage_order).padStart(2, "0")}</span><span className={`badge exec-${stage.execution_type}`}>{EXEC[stage.execution_type] ?? stage.execution_type}</span></div><h3>{stage.name}</h3><p>{stage.purpose || "No purpose has been described for this stage."}</p>
+    {isAi && <div className="stage-criteria">
+      <p className="stage-criteria-label">What the AI asks</p>
+      {stage.information_requirements.length > 0
+        ? <div className="chip-row">{stage.information_requirements.map((k, i) => <span className="chip" key={i}>{fieldLabel(k)}</span>)}</div>
+        : <p className="muted stage-criteria-empty">Interest only — edit in the Voice agents panel.</p>}
+    </div>}
     <div className="stage-criteria">
       <p className="stage-criteria-label">Success criteria</p>
       {stage.criteria.length > 0
@@ -21,6 +38,71 @@ function StageCard({ stage }: { stage: StageDetail }) {
         : <p className="muted stage-criteria-empty">None defined for this stage.</p>}
     </div>
     <div className="workspace-stage-foot"><span>{stage.criteria.length} criteria</span>{stage.requires_human_approval && <span>Human checkpoint</span>}</div></article>;
+}
+
+/**
+ * F-009: recruiter-safe readiness of each AI stage's voice agent. Shows whether a stage has its
+ * own on-intent agent, is falling back to the default, or has none yet — never the underlying
+ * Hunar agent id (telephony internals stay server-side). Recruiters can re-provision to bind
+ * correct per-stage agents when calling is configured.
+ */
+function StageVoiceAgents({ jobId, versionId }: { jobId: string; versionId: string }) {
+  const [rows, setRows] = useState<StageAgent[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => { api.listStageAgents(jobId, versionId).then(setRows).catch((e) => setError((e as Error).message)); }, [jobId, versionId]);
+  const provision = async () => {
+    setBusy(true); setError(null); setNote(null);
+    try { setRows(await api.provisionStageAgents(jobId, versionId)); setNote("Voice agents provisioned for this funnel."); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+  const onSaved = (updated: StageAgent) => setRows((prev) => prev ? prev.map((r) => r.stage_id === updated.stage_id ? updated : r) : prev);
+  if (error && !rows) return null; // agents are advisory; don't block the funnel view on a fetch error
+  if (!rows) return null;
+  if (rows.length === 0) return null; // no AI stages
+  return <section className="workspace-section"><div className="workspace-section-heading"><div><p className="eyebrow">AI calling</p><h2>Voice agents</h2><p>Each AI stage is handled by a voice agent matched to this role and the stage&apos;s purpose. Review what each one does — and edit it if needed.</p></div><button className="secondary" disabled={busy} onClick={provision}>{busy ? "Provisioning…" : "Provision agents"}</button></div>
+    {error && <p className="error">{error}</p>}
+    {note && <p className="ok" style={{ fontSize: 13 }}>{note}</p>}
+    <div className="voice-agent-list">{rows.map((a) => <VoiceAgentCard key={a.stage_id} jobId={jobId} agent={a} onSaved={onSaved} />)}</div>
+    <p className="muted" style={{ fontSize: 12 }}>&ldquo;Using default&rdquo; means calls fall back to a shared agent until per-stage provisioning runs. Provisioning needs voice calling enabled in Settings.</p>
+  </section>;
+}
+
+const PURPOSE_LABEL: Record<string, string> = { screening: "Screening", technical: "Technical interview", sales: "Sales", manager: "Hiring manager", compensation: "Compensation" };
+
+/** One AI stage's voice-agent card: shows what it does (objective + what it asks) and, when the
+ *  stage has its own agent, lets the recruiter edit the objective and the fields it collects. */
+function VoiceAgentCard({ jobId, agent, onSaved }: { jobId: string; agent: StageAgent; onSaved: (a: StageAgent) => void }) {
+  const s = stageAgentStatus(agent);
+  const [editing, setEditing] = useState(false);
+  const [objective, setObjective] = useState(agent.objective);
+  const [collects, setCollects] = useState(agent.collect_keys.join(", "));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const start = () => { setObjective(agent.objective); setCollects(agent.collect_keys.join(", ")); setError(null); setEditing(true); };
+  const save = async () => {
+    setBusy(true); setError(null);
+    try {
+      const keys = collects.split(",").map((x) => x.trim()).filter(Boolean);
+      const updated = await api.editStageAgentSpec(jobId, agent.stage_id, objective.trim(), keys);
+      onSaved(updated); setEditing(false);
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  };
+  return <article className="voice-agent-card">
+    <div className="voice-agent-head"><div><h4>{agent.stage_name}</h4><span className="muted" style={{ fontSize: 12 }}>{PURPOSE_LABEL[agent.purpose_family] ?? agent.purpose_family}</span></div><span className={`badge ${s.ready ? (s.warn ? "draft" : "active") : "archived"}`}>{s.label}</span></div>
+    {!editing ? <>
+      <p className="voice-agent-objective">{agent.objective}</p>
+      <div className="voice-agent-collects"><span className="muted" style={{ fontSize: 12 }}>Asks about</span><div className="chip-row">{agent.collects.length ? agent.collects.map((c, i) => <span className="chip" key={i}>{c}</span>) : <span className="muted">interest only</span>}</div></div>
+      {agent.editable && <button className="linklike" onClick={start}>Edit what this agent does</button>}
+    </> : <div className="voice-agent-edit">
+      {error && <p className="error">{error}</p>}
+      <label>Objective<textarea rows={3} value={objective} onChange={(e) => setObjective(e.target.value)} placeholder="What should this agent accomplish on the call?" /></label>
+      <label>Fields to collect<span className="field-hint">Separate with commas</span><input value={collects} onChange={(e) => setCollects(e.target.value)} placeholder="e.g. interest, expected_ctc, notice_period" /></label>
+      <div className="row"><button disabled={busy || !objective.trim()} onClick={save}>{busy ? "Saving…" : "Save agent"}</button><button className="secondary" disabled={busy} onClick={() => setEditing(false)}>Cancel</button></div>
+    </div>}
+  </article>;
 }
 
 function JobDescriptionCard({ jobId, version, onChanged }: { jobId: string; version: JobVersion | null; onChanged: () => Promise<void> }) {
@@ -496,7 +578,7 @@ export default function JobDetailPage() {
     {error && <p className="error workspace-error">{error}</p>}
     <nav className="workspace-tabs" aria-label="Job workspace">{tabs.map(([id, label, count]) => <button key={id} className={tab === id ? "active" : ""} aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)}>{label}{count ? <span>{count}</span> : null}</button>)}</nav>
     {tab === "overview" && <div className="workspace-overview"><section className="workspace-hero-card"><div><p className="eyebrow">Next action</p><h2>{nextLabel}</h2><p>{!jdConfirmed ? (jdVersion ? "Confirm the extracted job description below — the funnel is drafted from it." : "Add a job description below. The hiring funnel is drafted from it.") : !workflow ? "Draft the hiring funnel — its stages and criteria — before candidates can enter the process." : !workflow.approved ? "Open the draft to adjust stages and criteria, then approve it when your team is aligned." : job.status !== "active" ? "The funnel is approved. Activate this role before adding candidates." : "Manage candidates, review activity, and keep the pipeline moving from one place."}</p></div>{!jdConfirmed ? <button className="secondary" onClick={() => { document.getElementById("jd-card")?.scrollIntoView({ behavior: "smooth" }); }}>{jdVersion ? "Review description" : "Add description"}</button> : !workflow ? <button disabled={busy} onClick={draftWorkflow}>{busy ? "Drafting…" : "Draft funnel"}</button> : !workflow.approved ? <button onClick={openDraft}>Review draft</button> : job.status !== "active" ? <button disabled={busy} onClick={() => run(async () => setJob(await api.activateJob(jobId)))}>Activate job</button> : <button onClick={openAddCandidate}>Add candidates</button>}</section><section className="workspace-summary-grid"><div><span>Funnel</span><strong>{!workflow ? "Not drafted" : workflow.approved ? "Approved" : "Draft"}</strong><button className="linklike" onClick={() => setTab("workflow")}>View funnel</button></div><div><span>Candidates</span><strong>{funnel?.total ?? 0}</strong><button className="linklike" onClick={() => setTab("pipeline")}>Open pipeline</button></div><div><span>AI stages</span><strong>{stages.filter((stage) => stage.execution_type === "ai").length}</strong><button className="linklike" onClick={() => setTab("policy")}>Review policy</button></div></section><JobDescriptionCard jobId={jobId} version={jdVersion} onChanged={load} /><FunnelSection funnel={funnel} /><section className="workspace-section"><div className="workspace-section-heading"><div><p className="eyebrow">At a glance</p><h2>Funnel stages</h2></div>{stages.length > 0 && <button className="linklike" onClick={() => setTab("workflow")}>Open funnel →</button>}</div>{stages.length ? <div className="workspace-stage-grid">{stages.map((stage) => <StageCard key={stage.id} stage={stage} />)}</div> : <div className="workspace-empty">{jdConfirmed ? <>No funnel drafted yet. <button className="linklike" disabled={busy} onClick={draftWorkflow}>Draft the funnel</button> to suggest stages from the job description.</> : "Confirm a job description first — the funnel is drafted from it."}</div>}</section></div>}
-    {tab === "workflow" && <section className="workspace-section"><div className="workspace-section-heading"><div><p className="eyebrow">Funnel configuration</p><h2>{editing ? "Edit funnel draft" : "Hiring funnel"}</h2><p>{workflow?.approved ? "This approved version is read-only to protect active candidate journeys." : editing ? "Save your changes before approving this version." : !workflow ? "Draft a funnel of stages and criteria from the confirmed job description." : "Review the stages, criteria, and approval checkpoints for this role."}</p></div>{workflow && !workflow.approved && !editing && <button onClick={() => setEditing(true)}>Edit draft</button>}</div>{!workflow ? (jdConfirmed ? <div className="step-card empty-workflow"><div><h3>Generate a first draft</h3><p>We&apos;ll suggest stages and criteria from the confirmed job description. You stay in control before approval.</p></div><button disabled={busy} onClick={draftWorkflow}>{busy ? "Drafting…" : "Draft funnel"}</button></div> : <div className="workspace-empty">Confirm a job description first. <button className="linklike" onClick={() => setTab("overview")}>Go to the description</button> — the funnel is drafted from it.</div>) : editing && !workflow.approved ? <><WorkflowEditor initialStages={stagesToEdit(workflow.stages)} saveLabel="Save funnel changes" onSave={async (s) => { const wf = await api.editWorkflowStages(jobId, workflow.version_id, s); setWorkflow(wf); return stagesToEdit(wf.stages); }} /><div className="workspace-approval-bar"><div><strong>Ready to lock this funnel?</strong><p>Once approved, this version cannot be edited. Create a new version for future changes.</p></div><button disabled={busy} onClick={() => run(async () => { await api.approveWorkflow(jobId, workflow.version_id); setWorkflow(await api.getJobWorkflow(jobId)); setEditing(false); })}>{busy ? "Approving…" : "Approve funnel"}</button></div></> : <><div className="workspace-stage-grid">{stages.map((stage) => <StageCard key={stage.id} stage={stage} />)}</div>{!workflow.approved && <button className="secondary workspace-edit-cta" onClick={() => setEditing(true)}>Edit this draft</button>}</>}</section>}
+    {tab === "workflow" && <section className="workspace-section"><div className="workspace-section-heading"><div><p className="eyebrow">Funnel configuration</p><h2>{editing ? "Edit funnel draft" : "Hiring funnel"}</h2><p>{workflow?.approved ? "This approved version is read-only to protect active candidate journeys." : editing ? "Save your changes before approving this version." : !workflow ? "Draft a funnel of stages and criteria from the confirmed job description." : "Review the stages, criteria, and approval checkpoints for this role."}</p></div>{workflow && !workflow.approved && !editing && <button onClick={() => setEditing(true)}>Edit draft</button>}</div>{!workflow ? (jdConfirmed ? <div className="step-card empty-workflow"><div><h3>Generate a first draft</h3><p>We&apos;ll suggest stages and criteria from the confirmed job description. You stay in control before approval.</p></div><button disabled={busy} onClick={draftWorkflow}>{busy ? "Drafting…" : "Draft funnel"}</button></div> : <div className="workspace-empty">Confirm a job description first. <button className="linklike" onClick={() => setTab("overview")}>Go to the description</button> — the funnel is drafted from it.</div>) : editing && !workflow.approved ? <><WorkflowEditor initialStages={stagesToEdit(workflow.stages)} saveLabel="Save funnel changes" onSave={async (s) => { const wf = await api.editWorkflowStages(jobId, workflow.version_id, s); setWorkflow(wf); return stagesToEdit(wf.stages); }} /><div className="workspace-approval-bar"><div><strong>Ready to lock this funnel?</strong><p>Once approved, this version cannot be edited. Create a new version for future changes.</p></div><button disabled={busy} onClick={() => run(async () => { await api.approveWorkflow(jobId, workflow.version_id); setWorkflow(await api.getJobWorkflow(jobId)); setEditing(false); })}>{busy ? "Approving…" : "Approve funnel"}</button></div></> : <><div className="workspace-stage-grid">{stages.map((stage) => <StageCard key={stage.id} stage={stage} />)}</div>{workflow.approved && <StageVoiceAgents jobId={jobId} versionId={workflow.version_id} />}{!workflow.approved && <button className="secondary workspace-edit-cta" onClick={() => setEditing(true)}>Edit this draft</button>}</>}</section>}
     {tab === "pipeline" && <PipelineTab jobId={jobId} funnel={funnel} stages={stages} onChanged={load} addSignal={addSignal} />}
     {tab === "policy" && <section className="workspace-section policy-workspace"><div className="workspace-section-heading"><div><p className="eyebrow">Candidate contact controls</p><h2>Calling policy</h2><p>Set when AI calls may run and how unanswered calls are retried. Preferred language is a future agent preference; it does not change an existing call.</p></div></div><CallingPolicyCard jobId={jobId} /></section>}
     <ConfirmDialog

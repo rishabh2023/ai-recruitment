@@ -33,9 +33,38 @@ from .models import Call, CallAttempt
 
 logger = logging.getLogger(__name__)
 
+# Sent for a required agent variable the candidate doesn't have on file, so a missing optional
+# detail (location, email, …) never causes a Hunar 422 that blocks the call.
+_NOT_PROVIDED = "Not provided"
+
+# The interviewer name injected for agents whose script self-introduces via a persona placeholder
+# (e.g. "this is {persona_name} calling"). Matches the default voice persona used by generated
+# agents (agent_spec.build_agent_spec voice_persona="NEHA").
+_DEFAULT_PERSONA_NAME = "Neha"
+
 
 class HunarDispatchError(Exception):
     """The call could not be dispatched (no agent configured, etc.)."""
+
+
+def _summarize_hunar_error(exc: HunarError) -> str:
+    """Human-readable reason from a Hunar error, surfacing the validation detail (e.g. which
+    required variable was missing) so a 422 is diagnosable in the UI/audit, not opaque."""
+    body = exc.body
+    parts: list[str] = []
+    if isinstance(body, dict):
+        for key in ("detail", "message", "error", "errors", "non_field_errors"):
+            val = body.get(key)
+            if val:
+                parts.append(val if isinstance(val, str) else str(val))
+        # Field-level validation maps (e.g. {"custom_data": ["location is required"]}).
+        if not parts:
+            for k, v in body.items():
+                parts.append(f"{k}: {v if isinstance(v, str) else ', '.join(map(str, v)) if isinstance(v, list) else v}")
+    elif isinstance(body, str) and body.strip():
+        parts.append(body.strip())
+    summary = "; ".join(parts)[:300]
+    return f"{exc} — {summary}" if summary else str(exc)
 
 
 class HunarDispatchService:
@@ -64,10 +93,19 @@ class HunarDispatchService:
             self._cancel_inactive_job(call, run, org.id)
             raise HunarDispatchError("Role is inactive; queued call was cancelled before dispatch.")
 
-        agent_id = self._resolve_agent_id(stage)
+        agent_id, agent_source = self._resolve_agent(stage, job, org)
         if not agent_id:
             self._fail(call, run, org.id, reason="No Hunar agent configured for this stage.")
             raise HunarDispatchError("No Hunar agent configured (set HUNAR_DEFAULT_AGENT_ID or a stage agent).")
+        if agent_source == "default":
+            # F-009: the global default is a last-resort fallback, never the normal path — surface
+            # it so a wrong-intent call is visible, not silent.
+            write_audit(
+                self._s, org_id=org.id, actor_user_id=self._actor,
+                action="interview.agent_fallback_default", entity_type="call", entity_id=call.id,
+                meta={"agent_id": agent_id, "stage_id": str(stage.id) if stage else None,
+                      "warning": "Stage has no bound voice agent; used the global default agent."},
+            )
 
         custom_data = self._build_custom_data(agent_id, candidate, job, org, stage, jc)
         guardrails, retry_config, timezone = self._calling_policy(job.id)
@@ -85,7 +123,8 @@ class HunarDispatchService:
         try:
             resp = self._client.create_call(payload)
         except HunarError as exc:
-            self._fail(call, run, org.id, reason=f"Hunar rejected the call: {exc}", meta={"body": exc.body})
+            detail = _summarize_hunar_error(exc)
+            self._fail(call, run, org.id, reason=f"Hunar rejected the call: {detail}", meta={"body": exc.body})
             raise
 
         call.hunar_call_id = str(resp.get("id") or "")
@@ -134,22 +173,61 @@ class HunarDispatchService:
         }
 
     # --- helpers ----------------------------------------------------------------
-    def _resolve_agent_id(self, stage: JobWorkflowStage | None) -> str | None:
+    def _resolve_agent(self, stage: JobWorkflowStage | None, job, org) -> tuple[str | None, str]:
+        """Resolve the agent for this stage, returning (agent_id, source).
+
+        Prefers the per-stage binding (``bound``). If none exists, a lazy safety net tries to
+        provision one now (``created``/``matched``) — the eager path at approval should have done
+        this, but a stage can be unbound (approved before F-009, provisioning failed, etc.).
+        Only if that cannot bind an agent does it fall back to the global default (``default``).
+        """
         if stage is not None:
             cfg = self._s.scalars(
-                select(HunarAgentConfig).where(HunarAgentConfig.job_workflow_stage_id == stage.id)
+                select(HunarAgentConfig)
+                .where(HunarAgentConfig.job_workflow_stage_id == stage.id)
+                .order_by(HunarAgentConfig.created_at.desc())
             ).first()
             if cfg and cfg.hunar_agent_id:
-                return cfg.hunar_agent_id
-        return settings.hunar_default_agent_id or None
+                return cfg.hunar_agent_id, "bound"
+            lazy = self._lazy_provision(stage, job, org)
+            if lazy:
+                return lazy
+        return (settings.hunar_default_agent_id or None), "default"
+
+    def _lazy_provision(self, stage: JobWorkflowStage, job, org) -> tuple[str, str] | None:
+        """Best-effort bind at dispatch time. A failure here is swallowed so we fall back to the
+        default rather than dropping the call — provisioning is a convenience, dialing is the job.
+        """
+        if (stage.execution_type or "").lower() != "ai":
+            return None
+        from .agent_provisioning import AgentProvisioningError, AgentProvisioningService
+
+        try:
+            agent_id, source = AgentProvisioningService(
+                self._s, self._client, actor_user_id=self._actor
+            ).ensure_stage_agent(stage, job_title=job.title, company=org.name, org_id=org.id)
+        except (AgentProvisioningError, HunarError):
+            logger.warning("Lazy agent provisioning failed for stage %s; using default", stage.id)
+            return None
+        return agent_id, source
 
     def _build_custom_data(self, agent_id, candidate, job, org, stage, jc) -> dict[str, str]:
         """Base context + every variable the agent requires (missing keys → 422 otherwise)."""
+        name = candidate.full_name or "Candidate"
+        # Provide the context under every common alias an agent's script might reference. Hunar
+        # derives required custom-data keys from the placeholders in the agent prompt (e.g.
+        # ``{role}``, ``{persona_name}``), and those are not always listed in ``required_variables``
+        # — so sending the aliases up front prevents a 422 whichever naming the agent chose.
         base = {
-            "candidate_name": candidate.full_name or "Candidate",
+            "candidate_name": name,
+            "callee_name": name,
             "job_role": job.title,
             "job_title": job.title,
+            "role": job.title,
+            "position": job.title,
             "company": org.name,
+            "company_name": org.name,
+            "persona_name": _DEFAULT_PERSONA_NAME,
             "location": candidate.location or "",
             "stage": stage.name if stage else "",
         }
@@ -160,10 +238,20 @@ class HunarDispatchService:
         )
         base["collect"] = ",".join(effective)
 
-        # Ensure all agent-required variables are present (fill unknowns with "").
-        for key in self._required_variables(agent_id):
+        # Hunar returns 422 when an agent-required variable is missing OR empty. A candidate can
+        # legitimately lack optional details (location, email, …), and that must never block the
+        # call — so every required variable is present and any blank is filled with a neutral
+        # placeholder the agent can handle gracefully ("the caller didn't have this on file").
+        required = set(self._required_variables(agent_id))
+        for key in required:
             base.setdefault(key, "")
-        return {k: str(v) for k, v in base.items()}
+        out: dict[str, str] = {}
+        for key, value in base.items():
+            text = str(value).strip()
+            if not text and key in required:
+                text = _NOT_PROVIDED
+            out[key] = text
+        return out
 
     def _required_variables(self, agent_id: str) -> list[str]:
         try:

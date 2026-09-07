@@ -2,6 +2,70 @@
 
 This file is the resume point for any agent. Keep it current.
 
+## F-009 — Per-stage intent-matched voice-agent provisioning — in progress this session
+
+**Branch:** `feat/per-stage-agent-provisioning`. All backend automated checks green
+(`apps/api`: 174 passed via `.venv/bin/python -m pytest`); web typechecks + `npm run build` clean.
+
+**What now works (each AI funnel stage gets its own on-intent agent):**
+- **Generators** (`apps/api/app/integrations/hunar/agent_spec.py`) — pure. `stage_intent(...)` →
+  descriptor (role, company, stage name, purpose, collect fields). `classify_purpose()` picks a
+  base family (screening / technical / sales / manager / compensation); `build_agent_spec()`
+  emits a `POST /agents/` body whose `result_schema` keys **equal** the stage's
+  `information_requirements` (fixes the Evidence mismatch by construction). Single-brace
+  placeholders (pinned in the vendor matrix).
+- **Provisioning service** (`apps/api/app/modules/interviews/agent_provisioning.py`) —
+  `ensure_stage_agent()` runs bound → match-existing → create-and-bind. **Matching is
+  LLM-driven** (`LLMProvider.match_agent` — semantic role + stage-purpose + collect-fields match
+  over the ACTIVE account agents; strict: only returns a candidate id, confidence ≥ 0.7, else
+  None). Deterministic name match (role must appear in the agent's name) is the offline/fallback
+  path when no LLM key is set or the LLM declines. Idempotent.
+  `provision_version_agents()` sweeps all AI stages best-effort (per-stage typed errors, no abort).
+  `maybe_provision_version_agents()` / `provisioning_ready()` gate on the live-calls guard.
+- **Triggers** — eager at funnel approval (`apps/api/app/api/routers/jobs.py` `approve_workflow`,
+  best-effort, never blocks approval); lazy safety-net at dispatch
+  (`apps/api/app/modules/interviews/dispatch.py` `_resolve_agent` / `_lazy_provision`).
+- **Fallback surfaced** — dispatch writes audit `interview.agent_fallback_default` when it uses
+  the global default; no silent wrong-agent calls.
+- **View / override / EDIT API** — `GET /jobs/{id}/workflow/versions/{vid}/agents` now returns a
+  product-safe **profile per stage** (`objective`, `collects`, `collect_keys`, `purpose_family`,
+  `stage_purpose`, `editable`) so recruiters see *what each agent does*; `POST …/agents/provision`
+  (409 unless calling configured); `PUT …/workflow/stages/{sid}/agent` (override which agent);
+  **`PUT …/workflow/stages/{sid}/agent/spec`** (edit objective + collect fields → stored on the
+  binding's new `spec` JSONB and pushed to Hunar via `update_agent`, best-effort). Editable profile
+  persisted via migration `a1b2c3d4e5f6` (`hunar_agent_configs.spec`), stored on create/override
+  and by `AgentProvisioningService.update_stage_agent`.
+- **Web** — recruiter-safe `StageVoiceAgents` panel in `apps/web/app/jobs/[id]/page.tsx`
+  (approved-funnel view): a `VoiceAgentCard` per AI stage showing readiness, purpose family, the
+  **objective**, and the **fields it asks about** (chips); an inline **edit** form (objective +
+  comma-separated collect fields) for stages with their own agent. **Never shows Hunar ids**
+  (`stageAgentStatus` / `editStageAgentSpec` in `apps/web/lib/api.ts`).
+
+**Tests added:** `apps/api/tests/test_agent_spec.py` (+purpose classification/technical script),
+`test_agent_provisioning.py` (match/create/mismatch/idempotent/sweep/failure),
+`test_agent_provisioning_api.py` (view/override/guard), plus `test_hunar_dispatch.py` updated for
+the lazy net.
+
+**Migration to apply before running the app** (test DB already migrated this session):
+`cd apps/api && alembic upgrade head` (adds `hunar_agent_configs.spec`, rev `a1b2c3d4e5f6`).
+
+**Remaining / next action (in order):**
+1. Override UX: add a `GET` that lists account agents by **name** (recruiter picks a name, not an
+   id) and swap the web panel's provision-only affordance for a per-stage picker.
+2. Staging: one real Hunar sandbox call from a generated agent to confirm Evidence populates
+   end-to-end (acceptance item still `[x]` by construction but unverified live).
+3. Migration note: existing hand-made agents (e.g. "Screener - Full Stack Developer") whose keys
+   differ — re-bind to generated agents or add a per-binding key map.
+4. Docs: `architecture.md` (agent ownership) + `domain.md` (`HunarAgentConfig` lifecycle) still to
+   receive a short section (matrix + feature brief already updated).
+
+**Risks:** provisioning creates real vendor resources — gated behind the live-calls guard; keep it
+that way. Re-provision must not orphan in-flight calls (current binding is additive/newest-wins;
+dispatch reads newest — verify before enabling frequent re-provision).
+
+---
+
+
 ## Hunar voice-AI key health check + in-app admin re-key — done this session
 
 - **Global durable key override:** new `app_config` DB table (migration `f8a1c2d3e4b5`,

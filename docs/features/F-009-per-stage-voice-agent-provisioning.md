@@ -1,6 +1,9 @@
 # F-009: Per-stage voice-agent provisioning (intent-matched, auto-created)
 
-- **Status:** Proposed
+- **Status:** In progress — slices 1–5 implemented (generators, provisioning service, eager+lazy
+  triggers, surfaced default fallback, view/override API + recruiter-safe web panel). Remaining:
+  account-agent name picker for override (currently override takes an id), staging call with a
+  real Hunar sandbox agent, and the hand-made-agent migration note. See handoff.
 - **Risk tier:** High Risk *(creates vendor resources and drives real candidate calls)*
 - **Documentation-impact level:** 3
 - **Affected areas:** `apps/api` (interviews / workflows), Hunar adapter, `apps/web` (funnel setup), `docs/architecture.md`, `docs/domain.md`, `docs/vendor-capability-matrix.md`
@@ -41,6 +44,9 @@ The global `HUNAR_DEFAULT_AGENT_ID` becomes a last-resort fallback only, never t
 - An **agent-provisioning service** that, for each AI stage of a funnel, ensures a bound agent:
   1. **Bound already?** use it.
   2. **Match an existing agent by intent** (role + stage purpose) → bind it (reuse, no dup).
+     *Implemented as a semantic **LLM match** (`LLMProvider.match_agent`, confidence ≥ 0.7,
+     returns only a real candidate id) with a conservative deterministic name match as the
+     offline fallback.*
   3. **No match → create one** via `POST /agents/` with an intent-derived
      name / introduction / objective / agent_prompt, `custom_variables` for the context the
      platform injects, and a `result_schema` whose keys are exactly the stage's
@@ -92,16 +98,23 @@ From this descriptor the service produces:
 
 ## Acceptance criteria
 
-- [ ] Creating/approving a funnel binds every AI stage to a Hunar agent (reused or newly created).
-- [ ] Two jobs of different roles get **different** agents whose scripts match their role/stage.
-- [ ] A newly created agent's `result_schema` keys equal the stage's `information_requirements`;
-      after a completed call, those answers appear in "Evidence & Results".
-- [ ] Re-approving a funnel does **not** create duplicate agents (idempotent: bound stays bound;
-      matched reused; created once and remembered).
-- [ ] A recruiter can view the agent chosen per stage and override it with another account agent.
-- [ ] `HUNAR_DEFAULT_AGENT_ID` is used only when provisioning could not bind an agent, and that
-      fallback is surfaced (not silent).
-- [ ] No agent is created or call placed without the live-calls guard + org authorization.
+- [x] Creating/approving a funnel binds every AI stage to a Hunar agent (reused or newly created).
+      *(Eager at approval via `maybe_provision_version_agents`; lazy net at dispatch.)*
+- [x] Two jobs of different roles get **different** agents whose scripts match their role/stage.
+      *(Name includes role+stage; purpose classifier selects a base family — screening / technical
+      / sales / manager / compensation. Tests in `test_agent_spec.py`, `test_agent_provisioning.py`.)*
+- [x] A newly created agent's `result_schema` keys equal the stage's `information_requirements`
+      *(by construction in `agent_spec.build_agent_spec`)*; webhook→Evidence wiring pre-existing —
+      **needs a staging call to confirm end-to-end population.**
+- [x] Re-approving a funnel does **not** create duplicate agents (idempotent bound→matched→create;
+      `test_version_sweep_binds_every_ai_stage_once`).
+- [~] A recruiter can view the agent chosen per stage and override it. *View + override API done
+      (`GET …/agents`, `PUT …/stages/{id}/agent`) and a recruiter-safe web panel; override by
+      **account-agent name picker** (vs raw id) is the remaining UI slice.*
+- [x] `HUNAR_DEFAULT_AGENT_ID` used only as fallback and **surfaced** (audit
+      `interview.agent_fallback_default`), never silent.
+- [x] No agent created without the live-calls guard + org authorization (`provisioning_ready`;
+      provision endpoint returns 409 when calling is off — `test_provision_requires_calling_configured`).
 
 ## Edge / failure / authorization cases
 

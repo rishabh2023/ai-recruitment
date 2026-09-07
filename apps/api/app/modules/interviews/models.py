@@ -67,6 +67,9 @@ class StageResult(Base):
     recording_url = Column(Text)
     transcript_summary = Column(Text)
     result_schema_version = Column(Text)
+    # Platform-LLM recruiter assessment (recommendation + per-criterion notes + summary). Nullable
+    # — populated best-effort after the result arrives; null if the LLM was unavailable.
+    assessment = Column(JSONB)
     created_at = created_at()
 
 

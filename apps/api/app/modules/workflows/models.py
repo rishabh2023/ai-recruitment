@@ -144,4 +144,7 @@ class HunarAgentConfig(Base):
     job_workflow_stage_id = Column(UUID(as_uuid=True), ForeignKey("job_workflow_stages.id", ondelete="CASCADE"))
     hunar_agent_id = Column(Text, nullable=False)
     configuration_version = Column(Text)
+    # F-009: product-safe, recruiter-editable summary of what this stage's agent does —
+    # {"objective": str, "collects": [str], "name": str}. Null for legacy/unpopulated bindings.
+    spec = Column(JSONB)
     created_at = created_at()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from uuid import UUID
@@ -23,6 +24,9 @@ from app.api.schemas import (
     JobOut,
     JobVersionIn,
     JobVersionOut,
+    StageAgentOut,
+    StageAgentOverrideIn,
+    StageAgentSpecIn,
     TidyTextIn,
     TidyTextOut,
     JobWorkflowOut,
@@ -35,16 +39,27 @@ from app.db.session import get_session
 from app.integrations.llm import ExtractedJob, get_llm_provider
 from app.modules.audit.log import write_audit
 from app.modules.candidates.models import JobCandidate
+from app.modules.interviews.agent_provisioning import (
+    maybe_provision_version_agents,
+    provision_version_agents,
+)
+from app.integrations.hunar.client import HunarClient
+from app.integrations.hunar.keystore import build_client, resolve_api_key
 from app.modules.jobs.models import Job, JobVersion
 from app.modules.jobs.service import JobActivationError, JobService
+from app.config import settings
+from app.modules.organizations.models import Organization
 from app.modules.workflows.models import (
     CallingPolicy,
+    HunarAgentConfig,
     JobWorkflow,
     JobWorkflowStage,
     JobWorkflowVersion,
     StageCriteria,
 )
 from app.modules.workflows.service import WorkflowEditError, WorkflowService
+
+logger = logging.getLogger(__name__)
 
 _EXEC_TYPES = {"ai", "human", "system"}
 _CRITERION_KINDS = {"numeric", "rule"}
@@ -408,13 +423,168 @@ def list_stages(job_id: UUID, version_id: UUID, session: Session = Depends(get_s
     )
 
 
+def _stage_agents_view(session: Session, version_id: UUID, *, job_title: str, company: str) -> list[StageAgentOut]:
+    """The voice agent resolved for each AI stage of a version, newest binding wins. Includes a
+    product-safe profile (objective + what it collects) so the recruiter has clear visibility."""
+    from app.integrations.hunar.agent_spec import agent_profile, stage_intent
+
+    stages = session.scalars(
+        select(JobWorkflowStage)
+        .where(JobWorkflowStage.job_workflow_version_id == version_id)
+        .order_by(JobWorkflowStage.stage_order.asc())
+    ).all()
+    out: list[StageAgentOut] = []
+    for stage in stages:
+        if (stage.execution_type or "").lower() != "ai":
+            continue
+        cfg = session.scalars(
+            select(HunarAgentConfig)
+            .where(HunarAgentConfig.job_workflow_stage_id == stage.id)
+            .order_by(HunarAgentConfig.created_at.desc())
+        ).first()
+        if cfg and (cfg.hunar_agent_id or "").strip():
+            agent_id, source, editable = cfg.hunar_agent_id, "bound", True
+        elif (settings.hunar_default_agent_id or "").strip():
+            agent_id, source, editable = settings.hunar_default_agent_id, "default", False
+        else:
+            agent_id, source, editable = None, "unset", False
+        # Prefer the stored (possibly recruiter-edited) profile; otherwise derive a faithful
+        # preview from the stage's own intent.
+        stored = cfg.spec if (cfg and isinstance(cfg.spec, dict)) else None
+        preview = agent_profile(stage_intent(
+            job_title=job_title, company=company, stage_name=stage.name,
+            information_requirements=stage.information_requirements, purpose=stage.purpose or "",
+        ))
+        profile = stored or preview
+        out.append(StageAgentOut(
+            stage_id=stage.id, stage_name=stage.name, execution_type=stage.execution_type,
+            hunar_agent_id=agent_id, source=source,
+            purpose_family=profile.get("purpose_family") or preview["purpose_family"],
+            stage_purpose=stage.purpose,
+            objective=profile.get("objective") or preview["objective"],
+            collects=profile.get("collects") or preview["collects"],
+            collect_keys=profile.get("collect_keys") or preview["collect_keys"],
+            editable=editable,
+        ))
+    return out
+
+
+def _job_title_company(session: Session, job: Job) -> tuple[str, str]:
+    org = session.get(Organization, job.org_id)
+    return job.title, (org.name if org else "our company")
+
+
+@router.get("/{job_id}/workflow/versions/{version_id}/agents", response_model=list[StageAgentOut])
+def list_stage_agents(job_id: UUID, version_id: UUID, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
+    """View the voice agent chosen for each AI stage (F-009)."""
+    job = _job_or_404(session, principal, job_id)
+    title, company = _job_title_company(session, job)
+    return _stage_agents_view(session, version_id, job_title=title, company=company)
+
+
+@router.post("/{job_id}/workflow/versions/{version_id}/agents/provision", response_model=list[StageAgentOut])
+def provision_stage_agents(job_id: UUID, version_id: UUID, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
+    """Re-run provisioning for every AI stage of this version (idempotent — bound stages keep
+    their agent). Requires the live-calls guard, since it creates vendor resources."""
+    job = _job_or_404(session, principal, job_id)
+    version = session.get(JobWorkflowVersion, version_id)
+    if version is None:
+        raise DomainError("Workflow version not found.", code="not_found", status_code=404)
+    api_key, _ = resolve_api_key(session)
+    from app.modules.interviews.agent_provisioning import provisioning_ready
+
+    if not api_key or not provisioning_ready(session, job.org_id):
+        raise DomainError(
+            "Voice calling must be configured and enabled before provisioning agents.",
+            code="conflict", status_code=409,
+        )
+    provision_version_agents(session, version, build_client(api_key), actor_user_id=principal.user_id)
+    title, company = _job_title_company(session, job)
+    return _stage_agents_view(session, version_id, job_title=title, company=company)
+
+
+@router.put("/{job_id}/workflow/stages/{stage_id}/agent", response_model=StageAgentOut)
+def override_stage_agent(job_id: UUID, stage_id: UUID, body: StageAgentOverrideIn, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
+    """Bind a specific account agent to an AI stage, overriding provisioning (F-009)."""
+    job = _job_or_404(session, principal, job_id)
+    stage = session.get(JobWorkflowStage, stage_id)
+    if stage is None:
+        raise DomainError("Stage not found.", code="not_found", status_code=404)
+    if (stage.execution_type or "").lower() != "ai":
+        raise DomainError("Only AI stages have a voice agent.", code="conflict", status_code=409)
+    agent_id = (body.hunar_agent_id or "").strip()
+    if not agent_id:
+        raise DomainError("A voice agent id is required.", code="validation", status_code=422)
+    from app.integrations.hunar.agent_spec import agent_profile, stage_intent
+
+    title, company = _job_title_company(session, job)
+    profile = agent_profile(stage_intent(
+        job_title=title, company=company, stage_name=stage.name,
+        information_requirements=stage.information_requirements, purpose=stage.purpose or "",
+    ))
+    session.add(HunarAgentConfig(
+        job_workflow_stage_id=stage.id, hunar_agent_id=agent_id, configuration_version="override",
+        spec=profile,
+    ))
+    write_audit(
+        session, org_id=job.org_id, actor_user_id=principal.user_id,
+        action="interview.agent_overridden", entity_type="job_workflow_stage", entity_id=stage.id,
+        meta={"hunar_agent_id": agent_id},
+    )
+    session.flush()
+    return _stage_agent_out_for(session, stage, job_title=title, company=company)
+
+
+def _stage_agent_out_for(session: Session, stage: JobWorkflowStage, *, job_title: str, company: str) -> StageAgentOut:
+    """Enriched view of a single stage's agent (reuses the version-level builder)."""
+    rows = _stage_agents_view(session, stage.job_workflow_version_id, job_title=job_title, company=company)
+    for r in rows:
+        if r.stage_id == stage.id:
+            return r
+    raise DomainError("Stage not found in its version.", code="not_found", status_code=404)
+
+
+@router.put("/{job_id}/workflow/stages/{stage_id}/agent/spec", response_model=StageAgentOut)
+def edit_stage_agent_spec(job_id: UUID, stage_id: UUID, body: StageAgentSpecIn, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
+    """Edit what a stage's AI agent does — its objective and the fields it collects (F-009).
+    Stored durably and pushed to the bound Hunar agent (best-effort when calling is configured)."""
+    job = _job_or_404(session, principal, job_id)
+    stage = session.get(JobWorkflowStage, stage_id)
+    if stage is None:
+        raise DomainError("Stage not found.", code="not_found", status_code=404)
+    if (stage.execution_type or "").lower() != "ai":
+        raise DomainError("Only AI stages have a voice agent.", code="conflict", status_code=409)
+    if not (body.objective or "").strip():
+        raise DomainError("An objective is required.", code="validation", status_code=422)
+    title, company = _job_title_company(session, job)
+    api_key, _ = resolve_api_key(session)
+    client = build_client(api_key) if api_key else HunarClient.from_settings(settings)
+    from app.modules.interviews.agent_provisioning import AgentProvisioningError, AgentProvisioningService
+
+    try:
+        AgentProvisioningService(session, client, actor_user_id=principal.user_id).update_stage_agent(
+            stage, objective=body.objective, collects=body.collects, job_title=title,
+            company=company, org_id=job.org_id,
+        )
+    except AgentProvisioningError as exc:
+        raise DomainError(str(exc), code="conflict", status_code=409)
+    return _stage_agent_out_for(session, stage, job_title=title, company=company)
+
+
 @router.post("/{job_id}/workflow/versions/{version_id}/approve", response_model=WorkflowVersionOut)
 def approve_workflow(job_id: UUID, version_id: UUID, session: Session = Depends(get_session), principal: Principal = Depends(get_principal)):
     _job_or_404(session, principal, job_id)
     version = session.get(JobWorkflowVersion, version_id)
     if version is None:
         raise DomainError("Workflow version not found.", code="not_found", status_code=404)
-    return WorkflowService(session, principal.user_id).approve_workflow_version(version, principal.user_id)
+    out = WorkflowService(session, principal.user_id).approve_workflow_version(version, principal.user_id)
+    # F-009: eagerly bind each AI stage to an on-intent voice agent so the funnel is call-ready.
+    # Best-effort — a Hunar hiccup must never block approval (stages fall back to the default).
+    try:
+        maybe_provision_version_agents(session, version, actor_user_id=principal.user_id)
+    except Exception:  # noqa: BLE001 — provisioning is advisory at approval time
+        logger.exception("Eager agent provisioning failed for workflow version %s", version_id)
+    return out
 
 
 @router.post("/{job_id}/activate", response_model=JobOut)

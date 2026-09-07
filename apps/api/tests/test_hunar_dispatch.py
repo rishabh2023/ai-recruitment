@@ -25,14 +25,26 @@ from app.workflow_execution import StageRunState
 
 
 class FakeHunar:
-    def __init__(self, *, required=None, create_resp=None, raise_on_create=None):
+    def __init__(self, *, required=None, create_resp=None, raise_on_create=None, can_provision=True):
         self._required = required or []
         self._create_resp = create_resp or {"id": "hunar-xyz", "status": "NOT_STARTED"}
         self._raise = raise_on_create
+        self._can_provision = can_provision
         self.last_payload = None
 
     def get_agent(self, agent_id):
         return {"required_variables": self._required}
+
+    def list_agents(self, *, page: int = 1):
+        # No pre-existing account agents → provisioning would create one, unless disabled.
+        if not self._can_provision:
+            raise HunarError("agent listing unavailable", status_code=503)
+        return {"results": []}
+
+    def create_agent(self, payload):
+        if not self._can_provision:
+            raise HunarError("agent creation unavailable", status_code=503)
+        return {"id": "hunar-agent-new", "status": "ACTIVE"}
 
     def create_call(self, payload):
         self.last_payload = payload
@@ -125,10 +137,32 @@ def test_dispatch_success_updates_call_and_fills_required_vars(session):
     cd = fake.last_payload["custom_data"]
     assert cd["candidate_name"] == "Asha"
     assert cd["job_role"] == "Backend Engineer"
+    # Common aliases are sent so an agent scripted with {role}/{persona_name}/{callee_name} etc.
+    # is satisfied whichever naming it uses (Hunar 422s on a script placeholder we don't send).
+    assert cd["role"] == "Backend Engineer"
+    assert cd["callee_name"] == "Asha"
+    assert cd["persona_name"]  # non-empty interviewer name
     assert cd["company"] == "Acme"
     assert cd["location"] == "Bengaluru"
-    assert cd["hobby"] == ""  # required-but-unknown filled with empty string
+    # A required-but-unknown variable is filled with a neutral placeholder (never empty), so
+    # Hunar does not 422 on it — the call goes through regardless of missing optional details.
+    assert cd["hobby"] == "Not provided"
     assert fake.last_payload["mobile_number"] == "+919999999999"
+
+
+def test_missing_location_does_not_send_empty_required_var(session):
+    org, user, jc, stage, run, call = _setup(session)
+    # Candidate has no location on file, and the agent requires it → must be filled, not empty.
+    from app.modules.candidates.models import Candidate
+    cand = session.get(Candidate, jc.candidate_id)
+    cand.location = None
+    session.flush()
+    fake = FakeHunar(required=["candidate_name", "job_role", "company", "location", "email"])
+    HunarDispatchService(session, client=fake, actor_user_id=user.id).dispatch(call.id)
+    cd = fake.last_payload["custom_data"]
+    assert cd["location"] == "Not provided"
+    assert cd["email"] == "Not provided"
+    assert call.hunar_call_id == "hunar-xyz"  # call still placed
 
 
 def test_dispatch_failure_marks_call_and_run_failed(session):
@@ -145,8 +179,12 @@ def test_dispatch_failure_marks_call_and_run_failed(session):
 
 def test_dispatch_without_agent_fails_cleanly(session):
     org, user, jc, stage, run, call = _setup(session, with_agent=None)  # no config, no default
+    # can_provision=False → the lazy safety net can neither match nor create an agent, so with no
+    # default configured the dispatch must fail cleanly rather than dial a wrong/absent agent.
     with pytest.raises(HunarDispatchError):
-        HunarDispatchService(session, client=FakeHunar(), actor_user_id=user.id).dispatch(call.id)
+        HunarDispatchService(
+            session, client=FakeHunar(can_provision=False), actor_user_id=user.id
+        ).dispatch(call.id)
     assert call.normalized_status == "FAILED"
     assert run.status == StageRunState.FAILED.value
 

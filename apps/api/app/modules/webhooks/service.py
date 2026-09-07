@@ -9,6 +9,7 @@ Does not commit.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -16,20 +17,26 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.integrations.hunar import normalize_call_status, webhook_dedup_key
+from app.integrations.llm import get_llm_provider
 from app.modules.audit.log import write_audit
 from app.modules.candidates.models import JobCandidate
 from app.modules.candidates.service import CandidateService
 from app.modules.interviews.models import Call, CallAttempt, StageResult
 from app.modules.jobs.models import Job
+from app.modules.workflows.models import JobWorkflowStage, StageCriteria
 from app.workflow_execution import StageRunState, WorkflowExecutionService
 
 from .models import WebhookEvent
 
+logger = logging.getLogger(__name__)
+
 # Result fields we accept into candidate_facts (screening basics).
-_FACT_KEYS = (
-    "interested", "current_ctc", "expected_ctc", "notice_period",
-    "preferred_location", "availability", "reason_for_change",
-)
+# Only pure transport metadata is skipped (ids, the recording URL kept on the StageResult, etc.).
+# EVERY other key Hunar returns — including summary and any field the agent collected — is stored
+# and shown as evidence verbatim. No hardcoded field allowlist to drift out of sync with Hunar.
+_RESULT_IGNORE_KEYS = frozenset({
+    "recording_url", "transcript", "call_id", "id", "status", "request_id",
+})
 
 # Terminal call outcomes with no structured result → the run cannot wait forever. Each maps to
 # a human-readable reason recorded on the FAILED transition. RETRY_SCHEDULED is intentionally
@@ -168,23 +175,34 @@ class WebhookService:
     def _apply_result(self, call: Call, payload: dict) -> None:
         result = payload.get("result") or {}
         run_id = call.candidate_stage_run_id
-        self._s.add(
-            StageResult(
-                candidate_stage_run_id=run_id,
-                structured_result=result,
-                recording_url=payload.get("recording_url"),
-            )
+        stage_result = StageResult(
+            candidate_stage_run_id=run_id,
+            structured_result=result,
+            recording_url=payload.get("recording_url"),
         )
+        self._s.add(stage_result)
         self._s.flush()
 
         job_candidate = self._s.get(JobCandidate, call.job_candidate_id)
         candidates = CandidateService(self._s, self._actor)
-        for key in _FACT_KEYS:
-            if key in result and result[key] is not None:
-                candidates.record_fact(
-                    job_candidate, key, str(result[key]),
-                    source="stage_run", source_stage_run_id=run_id,
-                )
+        # Store every field the agent returned (except metadata/narrative) as evidence — the keys
+        # are driven by the agent's result schema (= the stage's information requirements), so a
+        # renamed or added field never silently drops off the candidate's Evidence panel.
+        for key, value in (result.items() if isinstance(result, dict) else []):
+            if key in _RESULT_IGNORE_KEYS or value is None:
+                continue
+            text = str(value).strip()
+            if not text:
+                continue
+            candidates.record_fact(
+                job_candidate, key, text,
+                source="stage_run", source_stage_run_id=run_id,
+            )
+
+        # Platform-LLM assessment: score the candidate against the stage's success criteria and
+        # write a recruiter summary. Best-effort — a slow/failing LLM must never block ingesting
+        # the result or advancing the run.
+        stage_result.assessment = self._assess(call, job_candidate, result)
 
         # Result received → human review before a hiring decision.
         from app.modules.candidates.models import CandidateStageRun
@@ -199,3 +217,32 @@ class WebhookService:
             self._s, org_id=job.org_id, actor_user_id=self._actor,
             action="interview.result_stored", entity_type="call", entity_id=call.id,
         )
+
+    def _assess(self, call: Call, job_candidate: JobCandidate, result: dict) -> dict | None:
+        """Run the platform-LLM assessment for a completed call. Returns the assessment dict, or
+        None on any failure — never raises into the result-ingestion path."""
+        from app.modules.candidates.models import CandidateStageRun
+
+        try:
+            run = self._s.get(CandidateStageRun, call.candidate_stage_run_id)
+            stage = self._s.get(JobWorkflowStage, run.job_workflow_stage_id) if run else None
+            job = self._s.get(Job, job_candidate.job_id)
+            if stage is None or job is None:
+                return None
+            criteria = self._s.scalars(
+                select(StageCriteria).where(StageCriteria.job_workflow_stage_id == stage.id)
+            ).all()
+            crit = [
+                {"name": c.name, "weight": float(c.weight) if c.weight is not None else None, "kind": c.kind}
+                for c in criteria
+            ]
+            summary = str(result.get("summary") or "").strip()
+            collected = {k: v for k, v in result.items() if k not in _RESULT_IGNORE_KEYS and v is not None}
+            assessment = get_llm_provider().assess_interview(
+                role=job.title, stage_name=stage.name, stage_purpose=stage.purpose or "",
+                criteria=crit, collected=collected, call_summary=summary,
+            )
+            return assessment or None
+        except Exception:  # noqa: BLE001 — assessment is advisory; ingestion must not fail on it
+            logger.warning("Interview assessment failed for call %s", call.id, exc_info=True)
+            return None

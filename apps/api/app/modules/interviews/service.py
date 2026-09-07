@@ -70,7 +70,11 @@ class InterviewService:
             CallAttempt(call_id=call.id, attempt_number=1, kind="business", normalized_status="QUEUED")
         )
 
-        # Move the run toward awaiting a result (enforced transitions).
+        # Move the run toward awaiting a result (enforced transitions). A run the candidate was
+        # just advanced into is PENDING, so promote it to READY first (PENDING→READY→SCHEDULED→
+        # IN_PROGRESS→AWAITING_RESULT); an already-READY run skips the first step.
+        if run.status == StageRunState.PENDING.value:
+            self._wes.mark_ready(run)
         if run.status == StageRunState.READY.value:
             self._wes.schedule(run)
         self._wes.start(run)

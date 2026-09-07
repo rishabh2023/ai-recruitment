@@ -33,7 +33,7 @@ from app.modules.sourcing import SourcingProviderError, SourcingService
 from app.db.session import get_session
 from app.modules.candidates.models import Candidate, CandidateFact, CandidateStageRun, JobCandidate
 from app.modules.candidates.service import CandidateService
-from app.modules.interviews.models import Call
+from app.modules.interviews.models import Call, StageResult
 from app.modules.jobs.models import Job
 from app.modules.workflows.models import JobWorkflowStage
 from app.workflow_execution import StageOutcome, StageRunState, WorkflowExecutionService
@@ -478,6 +478,17 @@ def timeline(jc_id: UUID, session: Session = Depends(get_session), principal: Pr
     ).all()
     facts = session.scalars(select(CandidateFact).where(CandidateFact.job_candidate_id == jc.id)).all()
     names = _stage_names(session, {r.job_workflow_stage_id for r in runs})
+    # Latest LLM assessment across this candidate's stage runs (most recent completed call).
+    assessment = None
+    run_ids = [r.id for r in runs]
+    if run_ids:
+        sr = session.scalars(
+            select(StageResult)
+            .where(StageResult.candidate_stage_run_id.in_(run_ids), StageResult.assessment.isnot(None))
+            .order_by(StageResult.created_at.desc())
+            .limit(1)
+        ).first()
+        assessment = sr.assessment if sr else None
     return TimelineOut(
         job_candidate=JobCandidateOut.model_validate(jc),
         candidate=_summary(candidate),
@@ -492,4 +503,5 @@ def timeline(jc_id: UUID, session: Session = Depends(get_session), principal: Pr
         ],
         calls=[{"id": str(c.id), "normalized_status": c.normalized_status, "hunar_call_id": c.hunar_call_id} for c in calls],
         facts=[{"field_key": f.field_key, "value": f.value, "source": f.source} for f in facts],
+        assessment=assessment,
     )

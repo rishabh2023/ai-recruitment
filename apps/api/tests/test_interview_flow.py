@@ -56,6 +56,24 @@ def test_import_candidate_creates_run_and_facts(session):
     assert {"interest", "location"} <= keys
 
 
+def test_launch_promotes_a_pending_run(session):
+    # A run the candidate was just advanced into is PENDING; launching it must promote PENDING→
+    # READY→…→AWAITING_RESULT rather than raise InvalidTransition (PENDING→IN_PROGRESS).
+    org, user, job, stages = _active_job_with_workflow(session)
+    cands = CandidateService(session, actor_user_id=user.id)
+    jc = cands.import_candidate(job, full_name="Asha", phone="+919999999999")
+    run = session.scalars(
+        select(CandidateStageRun).where(CandidateStageRun.job_candidate_id == jc.id)
+    ).first()
+    # Force PENDING to model a stage the candidate was just advanced into.
+    run.status = StageRunState.PENDING.value
+    session.flush()
+    call, _payload = InterviewService(session, user.id).launch_ai_stage(jc, stages[0], run)
+    session.refresh(run)
+    assert run.status == StageRunState.AWAITING_RESULT.value
+    assert call.normalized_status == "QUEUED"
+
+
 def test_start_at_later_stage_is_audited(session):
     org, user, job, stages = _active_job_with_workflow(session)
     from app.modules.audit.models import AuditEvent
@@ -104,7 +122,11 @@ def test_webhook_result_flow_and_idempotency(session):
         "id": "hunar-call-1",
         "request_id": call.request_id,
         "status": "COMPLETED",
-        "result": {"interested": "yes", "expected_ctc": "24 LPA", "notice_period": "30 days"},
+        # Whatever Hunar returns is stored verbatim — no matching against our own key list.
+        "result": {
+            "interest": True, "location": "Bangalore", "expected_ctc": "24 LPA",
+            "notice_period": "30 days", "summary": "Interested; 30-day notice.",
+        },
         "recording_url": "https://rec/1",
     }
     hooks = WebhookService(session, user.id)
@@ -117,8 +139,15 @@ def test_webhook_result_flow_and_idempotency(session):
     assert run.status == StageRunState.NEEDS_REVIEW.value
     sr = session.scalars(select(StageResult).where(StageResult.candidate_stage_run_id == run.id)).all()
     assert len(sr) == 1 and sr[0].recording_url == "https://rec/1"
-    facts = {f.field_key for f in session.scalars(select(CandidateFact).where(CandidateFact.job_candidate_id == jc.id))}
-    assert {"expected_ctc", "notice_period"} <= facts
+    # A recruiter assessment is produced from the result (stub LLM offline) and stored.
+    assert sr[0].assessment and sr[0].assessment.get("recommendation") in ("strong", "moderate", "weak")
+    assert "summary" in sr[0].assessment
+    facts = {f.field_key: f.value for f in session.scalars(select(CandidateFact).where(CandidateFact.job_candidate_id == jc.id))}
+    # Every non-metadata key Hunar returned is stored — including interest, location and summary,
+    # which the old hardcoded allowlist ("interested"/"preferred_location") would have dropped.
+    assert {"interest", "location", "expected_ctc", "notice_period", "summary"} <= set(facts)
+    assert facts["interest"] == "True" and facts["location"] == "Bangalore"
+    assert "recording_url" not in facts  # transport metadata is not evidence
 
     # Duplicate delivery: no new event, no new StageResult, no double-advance.
     ev2 = hooks.handle_hunar_event(event)

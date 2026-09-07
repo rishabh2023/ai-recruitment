@@ -72,3 +72,34 @@ def test_extract_job_falls_back_on_bad_json(monkeypatch):
     monkeypatch.setattr(p._client.messages, "create", lambda **kw: _text_response("not json at all"))
     job = p.extract_job("Account Executive with quota")
     assert job.role_family == "sales"  # stub fallback
+
+
+def test_match_agent_returns_id_above_threshold(monkeypatch):
+    p = _provider()
+    monkeypatch.setattr(p._client.messages, "create", lambda **kw: _text_response('{"agent_id":"a1","confidence":0.9}'))
+    got = p.match_agent(role="Backend", stage_purpose="screen", company="Acme", collect=["interest"],
+                        candidates=[{"id": "a1", "name": "Backend Screener"}])
+    assert got == "a1"
+
+
+def test_match_agent_rejects_low_confidence(monkeypatch):
+    p = _provider()
+    monkeypatch.setattr(p._client.messages, "create", lambda **kw: _text_response('{"agent_id":"a1","confidence":0.4}'))
+    assert p.match_agent(role="Backend", stage_purpose="screen", company="Acme", collect=[],
+                         candidates=[{"id": "a1", "name": "Backend Screener"}]) is None
+
+
+def test_match_agent_rejects_unknown_id(monkeypatch):
+    p = _provider()
+    monkeypatch.setattr(p._client.messages, "create", lambda **kw: _text_response('{"agent_id":"nope","confidence":0.99}'))
+    assert p.match_agent(role="Backend", stage_purpose="screen", company="Acme", collect=[],
+                         candidates=[{"id": "a1", "name": "Backend Screener"}]) is None
+
+
+def test_match_agent_none_on_api_error(monkeypatch):
+    p = _provider()
+    def _boom(**kw):
+        raise anthropic.APIError("x", request=None, body=None)
+    monkeypatch.setattr(p._client.messages, "create", _boom)
+    assert p.match_agent(role="Backend", stage_purpose="screen", company="Acme", collect=[],
+                         candidates=[{"id": "a1", "name": "Backend Screener"}]) is None

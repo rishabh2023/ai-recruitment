@@ -5,8 +5,10 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { api, type Timeline } from "@/lib/api";
 
-// Stage-run statuses that mean "an AI stage can be launched now".
-const LAUNCHABLE = new Set(["READY", "SCHEDULED"]);
+// Stage-run statuses that mean "an AI stage can be launched now". PENDING is included so a stage
+// the candidate was just advanced into (e.g. Technical Assessment) is immediately launchable —
+// matching the backend's launchable states.
+const LAUNCHABLE = new Set(["PENDING", "READY", "SCHEDULED"]);
 // Terminal states a recruiter can retry from (e.g. candidate didn't answer).
 const RETRYABLE = new Set(["FAILED", "CANCELLED"]);
 
@@ -246,6 +248,35 @@ export default function CandidateDetailPage() {
           </>
         )}
       </section>
+
+      {/* AI assessment (platform LLM: scored against the stage's criteria) */}
+      {tl.assessment && (
+        <section>
+          <h3>AI Assessment</h3>
+          <div className="card assessment-card">
+            <div className="assessment-head">
+              <span className={`badge rec-${tl.assessment.recommendation}`}>{tl.assessment.recommendation} match</span>
+              {tl.assessment.headline && <strong>{tl.assessment.headline}</strong>}
+            </div>
+            {tl.assessment.summary && <p className="assessment-summary">{tl.assessment.summary}</p>}
+            {tl.assessment.criteria && tl.assessment.criteria.length > 0 && (
+              <table className="facts">
+                <thead><tr><th>Criterion</th><th>Score</th><th>Notes</th></tr></thead>
+                <tbody>
+                  {tl.assessment.criteria.map((c, i) => (
+                    <tr key={i}>
+                      <td>{c.name}</td>
+                      <td>{c.score == null ? <span className="muted">—</span> : c.score}</td>
+                      <td className="muted">{c.notes || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <p className="muted" style={{ fontSize: 11, marginTop: 8 }}>Generated from the call — review the evidence below before deciding.</p>
+          </div>
+        </section>
+      )}
 
       {/* Evidence & Results */}
       <section>

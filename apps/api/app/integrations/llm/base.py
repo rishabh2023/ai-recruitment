@@ -59,6 +59,45 @@ class LLMProvider(Protocol):
 
     def draft_workflow(self, extracted: ExtractedJob) -> list[DraftStage]: ...
 
+    def assess_interview(
+        self,
+        *,
+        role: str,
+        stage_name: str,
+        stage_purpose: str,
+        criteria: list[dict[str, Any]],
+        collected: dict[str, Any],
+        call_summary: str,
+    ) -> dict[str, Any]:
+        """Produce a recruiter-facing assessment of a completed screening/interview call.
+
+        Reads the collected fields + Hunar's call summary and evaluates the candidate against the
+        stage's success ``criteria`` (each ``{name, weight, kind}``). Returns a dict:
+        ``{recommendation: 'strong'|'moderate'|'weak', headline, summary,
+        criteria: [{name, score (0-100 or null), notes}]}``. This is platform product intelligence
+        layered on top of Hunar's result — never a replacement for the candidate conversation.
+        Returns ``{}`` when no LLM is available so callers can skip rendering an assessment."""
+        return {}
+
+    def match_agent(
+        self,
+        *,
+        role: str,
+        stage_purpose: str,
+        company: str,
+        collect: list[str],
+        candidates: list[dict[str, Any]],
+    ) -> str | None:
+        """Pick the existing voice agent (from ``candidates``: ``{id, name, objective?}``) that
+        best fits this stage's intent — role + stage purpose + fields to collect — or None to
+        signal "no confident match, create a new agent" (F-009 intent matching).
+
+        This is product intelligence (semantic reuse of agents), not candidate conversation.
+        Implementations MUST only ever return an id present in ``candidates`` and MUST return None
+        rather than guess on a weak match. Providers without an LLM return None so the caller uses
+        its deterministic fallback."""
+        return None
+
     def read_pdf_text(self, pdf_bytes: bytes) -> str:
         """Transcribe a PDF's job description to plain text using the model's native PDF
         reading (handles scanned/image-only PDFs that local text extraction can't). Providers

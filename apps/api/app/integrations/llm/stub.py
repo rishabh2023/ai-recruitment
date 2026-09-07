@@ -36,6 +36,22 @@ class StubLLMProvider:
     def read_pdf_text(self, pdf_bytes: bytes) -> str:
         return ""  # the offline stub has no vision; caller falls back to paste
 
+    def match_agent(self, *, role, stage_purpose, company, collect, candidates) -> None:
+        return None  # no LLM offline; caller uses its deterministic name match instead
+
+    def assess_interview(self, *, role, stage_name, stage_purpose, criteria, collected, call_summary):
+        # Deterministic, no-LLM assessment: interest drives the recommendation, criteria are
+        # echoed without scores. Keeps the flow working (and tests stable) without a real model.
+        interested = str(collected.get("interest", "")).strip().lower() in ("true", "yes", "1")
+        summary = (call_summary or "").strip() or "Screening call completed."
+        return {
+            "recommendation": "moderate" if interested else "weak",
+            "headline": "Interested — review details" if interested else "Interest unclear",
+            "summary": summary,
+            "criteria": [{"name": c.get("name", ""), "score": None, "notes": ""} for c in (criteria or [])],
+            "engine": "stub",
+        }
+
     def extract_job(self, jd_text: str) -> ExtractedJob:
         text = (jd_text or "").strip()
         first_line = text.splitlines()[0].strip() if text else None
