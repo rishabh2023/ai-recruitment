@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 import AuthScreen from "./AuthScreen";
 import AssistantWidget from "./AssistantWidget";
+import HunarHealthBadge from "./HunarHealthBadge";
 import Icon from "./Icon";
 
 type NavItem = { href: string; label: string; icon: string; match: (p: string) => boolean; disabled?: boolean };
@@ -79,6 +80,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             <div className="who-role muted">{me.role}</div>
           </div>
         </div>
+        <HunarHealthBadge />
         <button className="secondary signout" onClick={logout}>Sign out</button>
       </aside>
       <div className="content">{children}</div>
