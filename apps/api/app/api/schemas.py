@@ -352,6 +352,25 @@ class LaunchOut(BaseModel):
     hunar_call_id: str | None = None
 
 
+class BulkLaunchResultItem(BaseModel):
+    job_candidate_id: UUID
+    name: str | None = None
+    # "launched" (a call was created/dispatched), "skipped" (already handled), or
+    # "failed" (an error prevented launching this one — the others still proceed).
+    outcome: str
+    reason: str | None = None
+    call_id: UUID | None = None
+    dispatched: bool = False
+
+
+class BulkLaunchOut(BaseModel):
+    stage_id: UUID
+    launched: int
+    skipped: int
+    failed: int
+    results: list[BulkLaunchResultItem]
+
+
 class CallStatusOut(BaseModel):
     call_id: UUID
     normalized_status: str | None
