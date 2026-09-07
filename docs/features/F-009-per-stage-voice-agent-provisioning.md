@@ -1,9 +1,15 @@
 # F-009: Per-stage voice-agent provisioning (intent-matched, auto-created)
 
-- **Status:** In progress — slices 1–5 implemented (generators, provisioning service, eager+lazy
-  triggers, surfaced default fallback, view/override API + recruiter-safe web panel). Remaining:
-  account-agent name picker for override (currently override takes an id), staging call with a
-  real Hunar sandbox agent, and the hand-made-agent migration note. See handoff.
+- **Status:** Shipped to `main` (commits `09a98c4`, `e8c750f`) and verified against live Hunar
+  calls. Delivered: intent generators; provisioning service (bound → LLM semantic match →
+  deterministic name match → create), **coverage-aware** (only reuse an agent that collects/
+  assesses everything the stage needs); **criteria-driven interview stages** (technical/manager/
+  sales agents assess the stage's success criteria, not a screening script); eager+lazy triggers;
+  surfaced default-agent fallback; view / override / **edit** API + recruiter-safe web panel; the
+  Evidence key-mismatch fix (store every field Hunar returns); and an **LLM post-call assessment**
+  (recommendation + per-criterion notes + recruiter summary). Remaining (nice-to-have): account-
+  agent **name picker** for override (override currently takes an id); a persistent public webhook
+  URL (dev uses an ephemeral tunnel); migrate/rebind any legacy hand-made agents.
 - **Risk tier:** High Risk *(creates vendor resources and drives real candidate calls)*
 - **Documentation-impact level:** 3
 - **Affected areas:** `apps/api` (interviews / workflows), Hunar adapter, `apps/web` (funnel setup), `docs/architecture.md`, `docs/domain.md`, `docs/vendor-capability-matrix.md`
@@ -153,9 +159,31 @@ candidate call.
 
 ## Notes
 
-- This subsumes the standalone "Evidence & Results key mismatch" fix: generated agents emit the
-  stage's keys, so evidence populates without a separate mapping layer. Existing hand-made agents
-  (e.g. "Screener - Full Stack Developer", whose keys differ) still need either re-binding to a
-  generated agent or a per-binding key map — tracked as a migration step.
-- Interim state (today): a single global default agent is set to a real screener as a stopgap;
-  this feature replaces that with correct per-stage agents.
+- This subsumes the standalone "Evidence & Results key mismatch" fix. It was fixed at the source:
+  the webhook result handler (`app/modules/webhooks/service.py`) now stores **every field Hunar
+  returns** as evidence (only pure transport metadata is skipped) rather than matching against a
+  hardcoded key allowlist — so a renamed/added field never silently drops off the Evidence panel.
+- Interim state is gone: the global `HUNAR_DEFAULT_AGENT_ID` is now a surfaced last-resort fallback
+  only; each AI stage gets a correct per-stage agent.
+
+## Implementation map (as shipped)
+
+- **Generators** — `app/integrations/hunar/agent_spec.py`: `stage_intent`, `classify_purpose`
+  (screening/technical/sales/manager/compensation), `stage_topics` (interview stages assess the
+  stage's **success criteria**), `build_agent_spec`, `agent_profile`.
+- **Provisioning** — `app/modules/interviews/agent_provisioning.py`: `AgentProvisioningService`
+  (bound → LLM match → name match → create, coverage-aware, idempotent), `update_stage_agent`
+  (edit objective + fields, push to Hunar), version sweep + `maybe_provision_version_agents`.
+- **LLM boundary** — `app/integrations/llm/`: `match_agent` (semantic reuse, strict + fallback) and
+  `assess_interview` (post-call recommendation + per-criterion notes + summary; Anthropic + stub).
+- **Dispatch** — `app/modules/interviews/dispatch.py`: per-stage agent resolution + lazy provision;
+  common context aliases (`role`, `persona_name`, `callee_name`, …) + placeholder fill for missing
+  required vars (a missing optional detail never 422s); surfaced 422 body + default-fallback audit.
+- **Result handling** — `app/modules/webhooks/service.py`: dynamic evidence storage + LLM assessment
+  on `stage_results.assessment`.
+- **API / Web** — `GET/POST/PUT /jobs/.../agents*` (view/provision/override/edit-spec); web Voice
+  agents panel, "What the AI asks" per stage, and the AI Assessment card on the candidate view.
+- **Migrations** — `hunar_agent_configs.spec` (`a1b2c3d4e5f6`), `stage_results.assessment`
+  (`b2c3d4e5f6a7`). Applied automatically on container start (`RUN_MIGRATIONS=1`).
+- **Related fix** — launching a freshly-advanced `PENDING` stage run promotes it to `READY` first
+  (`app/modules/interviews/service.py`).

@@ -2,10 +2,29 @@
 
 This file is the resume point for any agent. Keep it current.
 
-## F-009 — Per-stage intent-matched voice-agent provisioning — in progress this session
+## F-009 — Per-stage intent-matched voice-agent provisioning — SHIPPED to `main`
 
-**Branch:** `feat/per-stage-agent-provisioning`. All backend automated checks green
-(`apps/api`: 174 passed via `.venv/bin/python -m pytest`); web typechecks + `npm run build` clean.
+**Merged to `main`** (commits `09a98c4`, `e8c750f`) and verified against live Hunar calls.
+`apps/api`: **191 tests pass**; web typechecks + `npm run build` clean. The running Docker `api`
+service has all of this (rebuilt); migrations apply on start via `RUN_MIGRATIONS=1`.
+
+**Shipped beyond the original slices:**
+- **Criteria-driven interview stages** — technical/hiring-manager/sales agents assess the stage's
+  **success criteria** (not just information_requirements), so a Technical Assessment runs a real
+  technical interview with a result field per criterion. Coverage-aware matching won't reuse a
+  screener for such a stage. (`agent_spec.stage_topics`.)
+- **Evidence fix at source** — the webhook stores **every field Hunar returns** (no hardcoded key
+  allowlist); `interest`/`location` etc. no longer dropped. (`webhooks/service.py`.)
+- **LLM post-call assessment** — recommendation + per-criterion notes + recruiter summary, stored
+  on `stage_results.assessment`, shown as an "AI Assessment" card. (`LLMProvider.assess_interview`.)
+- **Call-reliability fixes** — context aliases (`role`/`persona_name`/`callee_name`) + placeholder
+  fill so missing location/email never 422s; surfaced Hunar 422 body; and promote a `PENDING` run
+  to `READY` before launch (fixes "Launch AI stage" on a just-advanced stage).
+- **Migrations** — `a1b2c3d4e5f6` (`hunar_agent_configs.spec`), `b2c3d4e5f6a7`
+  (`stage_results.assessment`).
+
+**Historical (original slices, now part of the above):**
+Original branch: `feat/per-stage-agent-provisioning`.
 
 **What now works (each AI funnel stage gets its own on-intent agent):**
 - **Generators** (`apps/api/app/integrations/hunar/agent_spec.py`) — pure. `stage_intent(...)` →
@@ -46,22 +65,26 @@ This file is the resume point for any agent. Keep it current.
 `test_agent_provisioning_api.py` (view/override/guard), plus `test_hunar_dispatch.py` updated for
 the lazy net.
 
-**Migration to apply before running the app** (test DB already migrated this session):
-`cd apps/api && alembic upgrade head` (adds `hunar_agent_configs.spec`, rev `a1b2c3d4e5f6`).
+**Migrations** apply automatically on container start (`RUN_MIGRATIONS=1`), or manually:
+`cd apps/api && alembic upgrade head` (heads: `hunar_agent_configs.spec` `a1b2c3d4e5f6`,
+`stage_results.assessment` `b2c3d4e5f6a7`).
 
-**Remaining / next action (in order):**
-1. Override UX: add a `GET` that lists account agents by **name** (recruiter picks a name, not an
-   id) and swap the web panel's provision-only affordance for a per-stage picker.
-2. Staging: one real Hunar sandbox call from a generated agent to confirm Evidence populates
-   end-to-end (acceptance item still `[x]` by construction but unverified live).
-3. Migration note: existing hand-made agents (e.g. "Screener - Full Stack Developer") whose keys
-   differ — re-bind to generated agents or add a per-binding key map.
-4. Docs: `architecture.md` (agent ownership) + `domain.md` (`HunarAgentConfig` lifecycle) still to
-   receive a short section (matrix + feature brief already updated).
+**Verified live end-to-end:** Initial Screening call collects all fields and shows an AI
+assessment; Technical Assessment re-provisioned to a criteria-driven technical agent.
 
-**Risks:** provisioning creates real vendor resources — gated behind the live-calls guard; keep it
-that way. Re-provision must not orphan in-flight calls (current binding is additive/newest-wins;
-dispatch reads newest — verify before enabling frequent re-provision).
+**Remaining / next action (nice-to-have):**
+1. Override UX: a `GET` that lists account agents by **name** (recruiter picks a name, not an id)
+   and a per-stage picker in the web Voice agents panel (override API already exists).
+2. Webhooks in dev rely on an **ephemeral Cloudflare quick-tunnel** in `PUBLIC_BASE_URL` (dies on
+   machine restart). Use a named cloudflared tunnel / stable public URL for durability.
+3. Legacy hand-made agents (e.g. "Screener - Full Stack Developer"): re-bind stages to generated
+   agents where they were matched before coverage-aware matching landed.
+4. Docs: short sections in `architecture.md` (agent ownership) + `domain.md` (`HunarAgentConfig` /
+   `StageResult.assessment` lifecycle) — matrix + this brief already updated.
+
+**Risks:** provisioning + agent edits create/update real Hunar resources — gated behind the
+live-calls guard; keep it that way. Re-provision is additive/newest-wins and dispatch reads the
+newest binding; it must not orphan in-flight calls — verify before enabling frequent re-provision.
 
 ---
 
