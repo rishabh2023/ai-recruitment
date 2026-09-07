@@ -41,7 +41,7 @@ def _signup_admin(client, email="admin@acme.test"):
 def _no_cache(monkeypatch):
     monkeypatch.setattr(keystore, "cache_get", lambda k: None)
     monkeypatch.setattr(keystore, "cache_set", lambda k, v, ttl: None)
-    monkeypatch.setattr(keystore, "cache_delete", lambda k: None)
+    monkeypatch.setattr("app.api.routers.hunar.cache_delete", lambda k: None)
 
 
 def test_health_requires_auth(client):
