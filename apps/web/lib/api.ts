@@ -192,6 +192,11 @@ export const api = {
       `/job-candidates/${jcId}/launch`,
       { method: "POST" },
     ),
+  // Launch the AI interview for every eligible candidate in a stage. Already-handled
+  // candidates (call in progress/awaiting result, already reviewed/completed, or rejected)
+  // are skipped server-side — nobody is re-dialed.
+  launchStageAll: (jobId: string, stageId: string) =>
+    req<BulkLaunchResult>(`/jobs/${jobId}/stages/${stageId}/launch-all`, { method: "POST" }),
   decide: (jcId: string, outcome: "pass" | "reject", reason?: string) =>
     req<{ outcome: string; advanced: boolean; pipeline_state: string | null; current_stage_name: string | null }>(
       `/job-candidates/${jcId}/decision`,
@@ -349,6 +354,21 @@ export type CandidateImport = {
 };
 export type CsvImportResult = { added: number; skipped: number; errors: Array<{ row: number; reason: string }> };
 export type PipelinePage = { items: JobCandidateListItem[]; total: number; page: number; page_size: number };
+export type BulkLaunchResultItem = {
+  job_candidate_id: string;
+  name: string | null;
+  outcome: "launched" | "skipped" | "failed";
+  reason: string | null;
+  call_id: string | null;
+  dispatched: boolean;
+};
+export type BulkLaunchResult = {
+  stage_id: string;
+  launched: number;
+  skipped: number;
+  failed: number;
+  results: BulkLaunchResultItem[];
+};
 export type StageRun = { id: string; stage_id: string; stage_name: string | null; status: string };
 export type CallItem = { id: string; normalized_status: string; hunar_call_id: string | null };
 export type Fact = { field_key: string; value: string | null; source: string | null };

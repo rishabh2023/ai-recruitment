@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { api, type CandidateImport, type CsvImportResult, type Funnel, type Job, type JobCandidateListItem, type JobVersion, type JobWorkflow, type PipelinePage, type StageDetail } from "@/lib/api";
+import { api, type BulkLaunchResult, type CandidateImport, type CsvImportResult, type Funnel, type Job, type JobCandidateListItem, type JobVersion, type JobWorkflow, type PipelinePage, type StageDetail } from "@/lib/api";
 import CallingPolicyCard from "@/components/CallingPolicyCard";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Modal from "@/components/Modal";
@@ -301,8 +301,16 @@ function PipelineTab({ jobId, funnel, stages, onChanged, addSignal }: { jobId: s
   const [data, setData] = useState<PipelinePage | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  // "Execute" — launch this AI stage for every eligible candidate at once.
+  const [confirmExec, setConfirmExec] = useState(false);
+  const [executing, setExecuting] = useState(false);
+  const [execResult, setExecResult] = useState<BulkLaunchResult | null>(null);
+  const [execError, setExecError] = useState<string | null>(null);
   const sourceHref = `/sourcing?job=${jobId}`;
   const total = funnel?.total ?? 0;
+  // The Execute action is stage-scoped: only when a single AI stage is selected.
+  const selectedStage = stage !== "all" ? stages.find((s) => s.id === stage) ?? null : null;
+  const canExecuteStage = selectedStage?.execution_type === "ai";
 
   // Debounce the search box; committing a new term resets to the first page.
   useEffect(() => { const t = setTimeout(() => { setQ(qInput.trim()); setPage(1); }, 300); return () => clearTimeout(t); }, [qInput]);
@@ -316,6 +324,22 @@ function PipelineTab({ jobId, funnel, stages, onChanged, addSignal }: { jobId: s
   useEffect(() => { fetchPage(); }, [fetchPage]);
 
   async function refresh() { await Promise.all([onChanged(), fetchPage()]); }
+
+  async function executeStage() {
+    if (!selectedStage) return;
+    setExecuting(true);
+    setExecError(null);
+    try {
+      const res = await api.launchStageAll(jobId, selectedStage.id);
+      setExecResult(res);
+      setConfirmExec(false);
+      await refresh();
+    } catch (e) {
+      setExecError((e as Error).message);
+    } finally {
+      setExecuting(false);
+    }
+  }
 
   // Filter chips from the funnel: All + each stage (with its live count) + New (no stage yet).
   const stageCount = (id: string) => funnel?.stages.find((s) => s.stage_id === id)?.current ?? 0;
@@ -363,8 +387,25 @@ function PipelineTab({ jobId, funnel, stages, onChanged, addSignal }: { jobId: s
               ))}
             </div>
             <input className="pipeline-search" type="search" value={qInput} onChange={(e) => setQInput(e.target.value)} placeholder="Search name, phone, email…" aria-label="Search candidates" />
+            {canExecuteStage && (
+              <button
+                className="btn pipeline-execute"
+                onClick={() => { setExecResult(null); setExecError(null); setConfirmExec(true); }}
+                title={`Launch “${selectedStage!.name}” for all eligible candidates`}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
+                Execute
+              </button>
+            )}
           </div>
 
+          {execResult && (
+            <p className="sourcing-flash" role="status">
+              Launched {execResult.launched} · skipped {execResult.skipped} already handled
+              {execResult.failed ? ` · ${execResult.failed} failed` : ""} in “{selectedStage?.name ?? "this stage"}”.
+              <button className="linklike" style={{ marginLeft: 8 }} onClick={() => setExecResult(null)}>Dismiss</button>
+            </p>
+          )}
           {err && <p className="error">{err}</p>}
 
           <div className="pipeline-table-wrap">
@@ -398,6 +439,23 @@ function PipelineTab({ jobId, funnel, stages, onChanged, addSignal }: { jobId: s
             </div>
           </div>
         </>
+      )}
+      {confirmExec && selectedStage && (
+        <div className="hunar-modal-backdrop" role="dialog" aria-modal="true" aria-label={`Launch ${selectedStage.name} for all candidates`}>
+          <div className="hunar-modal">
+            <h3>Launch “{selectedStage.name}” for all candidates?</h3>
+            <p className="muted">
+              This places a real AI screening call to every candidate in this stage who hasn’t been
+              handled yet. Candidates already called, awaiting your review, completed, or rejected
+              are skipped automatically — nobody is re-dialed.
+            </p>
+            {execError && <p className="error">{execError}</p>}
+            <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+              <button className="secondary" onClick={() => setConfirmExec(false)} disabled={executing}>Cancel</button>
+              <button onClick={executeStage} disabled={executing}>{executing ? "Launching…" : "Execute calls"}</button>
+            </div>
+          </div>
+        </div>
       )}
       <AddCandidateModal jobId={jobId} open={showAdd} onClose={() => setShowAdd(false)} onAdded={refresh} />
       <EditCandidateModal jc={editRow} open={editRow !== null} onClose={() => setEditRow(null)} onSaved={refresh} />

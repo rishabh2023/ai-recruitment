@@ -573,3 +573,5 @@ button.danger:hover:not(:disabled) { background: #d13b40; }
 .hunar-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 50; }
 .hunar-modal { background: var(--surface, #12121a); color: inherit; border-radius: 12px; padding: 20px; width: min(420px, 92vw); display: flex; flex-direction: column; gap: 12px; }
 .hunar-modal input { width: 100%; }
+
+.pipeline-execute { display: inline-flex; align-items: center; gap: 6px; }
