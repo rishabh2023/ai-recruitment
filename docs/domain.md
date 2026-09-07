@@ -25,7 +25,8 @@ retries, duplicate events, partial results, and manual overrides.
 | **Call** | A logical intent to reach a candidate for a stage. |
 | **Call Attempt** | One actual attempt against a Call (distinguishes business vs infrastructure retries). |
 | **Interview** | An AI conversation execution mapped to a stage run (subset of Call semantics for interview stages). |
-| **Result / Evidence** | Structured output, criteria-level scores, supporting evidence for a stage run. |
+| **Result / Evidence** | Structured output for a stage run: the vendor's raw structured result, plus a platform-LLM `assessment` (recommendation + per-criterion notes + recruiter summary). Every field the vendor returns is stored as candidate-facing evidence. |
+| **Hunar Agent Config** | The voice-agent binding for one AI stage: `job_workflow_stage_id → hunar_agent_id`, plus a product-safe `spec` (objective + fields the agent collects) and a `configuration_version`. Newest binding wins. Never exposed to recruiters (they see "the voice agent for this stage"). |
 | **Webhook Event** | Raw + normalized inbound vendor event, with dedup key. |
 | **Audit Event** | Immutable record of a consequential action. |
 | **Calling Policy** | Per-org/job (optionally per-stage) calling window, timezone behavior, attempt limits, retry interval, language. |
@@ -116,6 +117,29 @@ normalized business status:
 Hunar also exposes `lifecycle_status`, `engagement_status` (ENGAGED/NOT_ENGAGED),
 `answered_by` (HUMAN/MACHINE/UNKNOWN), and `call_ended_by` — persist these alongside status.
 Do not invent a UI state machine disconnected from Hunar.
+
+### Voice agent binding lifecycle (`HunarAgentConfig`, F-009)
+
+Each AI stage is bound to a Hunar voice agent. The binding is data (not a persisted state
+machine), created and updated through provisioning:
+
+```
+(no binding) --provision/approve or lazy at dispatch--> bound (source: matched | created)
+bound --recruiter override (pick another agent)--> bound (source: override)
+bound --recruiter edit objective/fields--> bound (spec updated, pushed to Hunar)
+bound --re-provision--> bound (new row; newest-wins; old row retained for audit)
+```
+
+- **matched**: an existing account agent that covers the stage's required fields was reused
+  (semantic LLM match, else name match).
+- **created**: a new agent was generated from the stage intent (name/objective/prompt/`result_schema`).
+- **override / edit**: a recruiter chose a different agent or edited what the agent does; edits are
+  stored on the binding's `spec` and pushed to Hunar (`PUT /agents/{id}`), best-effort.
+- **Fallback**: if no binding resolves, dispatch uses `HUNAR_DEFAULT_AGENT_ID` and **audits** the
+  fallback — never a silent wrong-agent call.
+
+Only an admin/recruiter of the org may provision, override, or edit, and only when live calling is
+configured (the same guard as placing calls). Bindings and agent ids are server-side.
 
 ### Candidate pipeline (default example — not hardcoded)
 

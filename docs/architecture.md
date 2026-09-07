@@ -197,6 +197,33 @@ Do not assume every stage needs a separately persisted Hunar agent. Behavior dep
 
 This mapping is never exposed to recruiters.
 
+#### As realized (F-009) — per-stage agent ownership
+
+Hunar requires persistent agent configuration for materially different behavior, so the platform
+provisions **one voice agent per AI stage** and persists the binding
+`job_workflow_stage_id → hunar_agent_id` in `HunarAgentConfig` (plus a product-safe `spec` of what
+the agent does). Ownership and flow:
+
+- **Resolution ladder** (`AgentProvisioningService`): already-bound → **LLM semantic match** of an
+  existing account agent by role + stage purpose → deterministic name match → **create** a new
+  agent from the stage intent. A match is **coverage-aware**: an existing agent is reused only if
+  its result schema collects/assesses everything the stage needs, so a screening agent is never
+  reused for a technical stage.
+- **Agent generation is deterministic** from the stage: `agent_spec` turns the stage's role,
+  purpose family (screening / technical / hiring-manager / sales / compensation) and its fields
+  into a Hunar `POST /agents/` body. For **interview stages the topics come from the stage's
+  success criteria**; the agent's `result_schema` keys equal what the stage collects, so evidence
+  populates by construction.
+- **Triggers**: eager at funnel approval, lazy safety-net at dispatch. Idempotent — re-provision
+  is additive/newest-wins and dispatch reads the newest binding.
+- **Fallback**: the global `HUNAR_DEFAULT_AGENT_ID` is a surfaced last-resort only (audited), never
+  the normal path.
+- **Platform LLM boundary** (product intelligence, not candidate conversation): semantic
+  agent-matching and a **post-call assessment** (recommendation + per-criterion notes + summary,
+  persisted on `StageResult.assessment`). Hunar remains the candidate-facing conversation layer.
+- **Recruiter-facing**: agents are shown as "the voice agent for this stage" with an editable
+  objective + fields; Hunar agent ids/prompts are never exposed.
+
 ## Conflicts resolved (source-of-truth rule)
 
 The architecture reference contains historical reasoning (§1–44) and later refinements
