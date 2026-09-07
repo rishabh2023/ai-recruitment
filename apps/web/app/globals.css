@@ -559,3 +559,17 @@ button.danger:hover:not(:disabled) { background: #d13b40; }
 .assistant-confirm-label { display: block; font-size: 13px; color: var(--text); margin-bottom: 8px; }
 .assistant-confirm-actions { display: flex; gap: 8px; }
 .assistant-confirm-yes { background: linear-gradient(135deg, var(--accent), #8b5cf6); border: none; padding: 7px 14px; font-size: 13px; }
+
+.hunar-badge { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; }
+.hunar-badge-pill { display: inline-flex; align-items: center; gap: 8px; border: none; background: transparent; color: inherit; font: inherit; cursor: default; padding: 4px 0; }
+.hunar-badge-pill:disabled { cursor: default; }
+.hunar-badge-pill:not(:disabled) { cursor: pointer; }
+.hunar-dot { width: 8px; height: 8px; border-radius: 50%; background: #888; }
+.hunar-badge-pill.ok .hunar-dot { background: #22c55e; }
+.hunar-badge-pill.bad .hunar-dot { background: #ef4444; }
+.hunar-badge-pill.warn .hunar-dot { background: #9ca3af; }
+.hunar-badge-pill.checking .hunar-dot { background: #f59e0b; }
+.hunar-badge-hint { font-size: 11px; opacity: 0.7; }
+.hunar-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 50; }
+.hunar-modal { background: var(--surface, #12121a); color: inherit; border-radius: 12px; padding: 20px; width: min(420px, 92vw); display: flex; flex-direction: column; gap: 12px; }
+.hunar-modal input { width: 100%; }
