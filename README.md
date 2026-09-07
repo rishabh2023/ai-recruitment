@@ -27,6 +27,11 @@ This repository answers the take-home assignment:
 2. **People Search & Reachout.** ✅ Built. Paste a JD → search people across **Apollo / PDL /
    Proxycurl / Coresignal** → add matches to the pipeline → reach out with a Voice AI agent →
    responses land back in the candidate dashboard as evidence. See **Sourcing** below.
+   > The **Apollo and PDL adapters are implemented and tested** end-to-end. They return live
+   > results only with a valid API key **that has available credits**. The keys used during
+   > development are out of credits, so live search currently returns no rows — **add your own key
+   > in Settings → Sourcing** (or via env) and it works immediately. With no key configured, the
+   > app falls back to an offline sample provider so the flow is still demonstrable.
 3. **"No smartphones, track attendance of 1000 people across 100 locations."** — answered in a
    **separate design document** (submitted alongside this repo).
 
@@ -182,7 +187,10 @@ Backend tests target a dedicated `*_test` database (auto-derived from `DATABASE_
   summary) is produced for the recruiter. Decisions are persisted and audited; calls dial during
   acceptable hours.
 - **Sourcing (People Search & Reachout)** — people search across four providers with recall-tuned
-  queries; add matches to the pipeline and reach out with a Voice AI agent.
+  queries; add matches to the pipeline and reach out with a Voice AI agent. The **Apollo** and
+  **PDL** adapters are built and tested; add a credited API key in **Settings → Sourcing** to get
+  live results (the dev keys are out of credits). Keys resolve org-first, then env; never returned
+  to clients.
 - **Settings** — provider keys, live-calling switch, team invites.
 - **Audit log** — paginated, searchable, immutable record of consequential actions.
 
