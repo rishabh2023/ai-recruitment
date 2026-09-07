@@ -16,6 +16,67 @@ CSV bulk import, a paginated candidate pipeline, and a conversational copilot.
 
 ---
 
+## Assignment submission
+
+This repository answers the take-home assignment:
+
+1. **AI Hiring Assistant — Voice AI agents (Hunar.AI).** ✅ Built. A recruiter creates a job
+   from a JD, the platform drafts and (on human approval) provisions **one voice agent per hiring
+   stage**, places the calls through Hunar, and turns each call's result into structured evidence
+   plus an AI assessment. See **[The intelligent hiring flow](#the-intelligent-hiring-flow-f-009)**.
+2. **People Search & Reachout.** ✅ Built. Paste a JD → search people across **Apollo / PDL /
+   Proxycurl / Coresignal** → add matches to the pipeline → reach out with a Voice AI agent →
+   responses land back in the candidate dashboard as evidence. See **Sourcing** below.
+3. **"No smartphones, track attendance of 1000 people across 100 locations."** — answered in a
+   **separate design document** (submitted alongside this repo).
+
+**Submission links**
+
+| | |
+| --- | --- |
+| **GitHub repository** | https://github.com/rishabh2023/ai-recruitment |
+| **Deployed solution** | _<add your deployed URL here before submitting>_ |
+
+> **Security note:** the Hunar API key is a secret and lives only in a git-ignored `.env` — it is
+> **not** in this repo or README. Provide your own keys in `.env` (see [Quick start](#quick-start-local)).
+> The assignment's temporary key is time-limited and may already be revoked.
+
+---
+
+## The intelligent hiring flow (F-009)
+
+The differentiator is that **each funnel stage is backed by a voice agent that understands that
+stage** — the role, the stage's purpose, and exactly what it must collect or assess — instead of
+one global agent screening everyone.
+
+```
+Create job (JD)  →  LLM extracts role + drafts the funnel  →  recruiter approves
+      →  per AI stage, ensure an on-intent voice agent:
+            bound? reuse  ·  a fitting account agent? reuse (LLM semantic match)
+            ·  otherwise generate one from the stage's intent
+      →  place the Hunar call with the right agent + injected context
+      →  webhook returns the result  →  store every field as evidence
+      →  platform LLM writes an assessment (recommendation + per-criterion notes + summary)
+      →  recruiter reviews evidence and advances / rejects
+```
+
+- **Reuse-or-create, coverage-aware** — an existing agent is reused only if it collects/assesses
+  everything the stage needs; otherwise a purpose-built agent is generated. A screening agent is
+  never reused for a technical interview.
+- **Purpose-shaped scripts** — screening, technical interview, hiring-manager, sales, and
+  compensation stages each get an appropriate conversation; **technical stages interview against
+  the stage's success criteria**.
+- **Evidence by construction** — the generated agent's result schema equals what the stage
+  collects, and the platform stores **every field Hunar returns** — nothing silently dropped.
+- **Recruiter-safe** — recruiters see "the voice agent for this stage" (view / override / edit its
+  objective and fields); Hunar agent ids and prompts are never exposed.
+- **Guarded** — provisioning and live calls require the org's live-calling switch + authorization;
+  the global default agent is a surfaced last-resort fallback only.
+
+See [`docs/features/F-009-per-stage-voice-agent-provisioning.md`](docs/features/F-009-per-stage-voice-agent-provisioning.md).
+
+---
+
 ## Repository layout
 
 ```
@@ -113,10 +174,15 @@ Backend tests target a dedicated `*_test` database (auto-derived from `DATABASE_
 - **Pipeline** — server-paginated, searchable, stage-filterable candidate table. Add candidates
   in place (with a required country-code selector → E.164 phones) or **bulk-import a CSV**
   (name + mobile mandatory). Per-role de-duplication. Inline edit.
-- **AI interviews** — launch AI stages as Hunar calls; evidence, criteria scores, and decisions
-  are persisted and audited. Calls dial during acceptable hours.
-- **Sourcing** — people search across four providers with recall-tuned queries; add matches to
-  the pipeline.
+- **Dynamic per-stage voice agents (F-009)** — each AI stage is bound to an on-intent Hunar agent,
+  reused (LLM semantic + coverage-aware match) or generated from the stage's role/purpose/criteria.
+  Recruiters can view, override, and edit what each stage's agent does.
+- **AI interviews** — launch AI stages as Hunar calls (single or "launch for all"); the result is
+  stored as evidence, and a **platform-LLM assessment** (recommendation + per-criterion notes +
+  summary) is produced for the recruiter. Decisions are persisted and audited; calls dial during
+  acceptable hours.
+- **Sourcing (People Search & Reachout)** — people search across four providers with recall-tuned
+  queries; add matches to the pipeline and reach out with a Voice AI agent.
 - **Settings** — provider keys, live-calling switch, team invites.
 - **Audit log** — paginated, searchable, immutable record of consequential actions.
 
@@ -130,6 +196,15 @@ Backend tests target a dedicated `*_test` database (auto-derived from `DATABASE_
   and a correct `CORS_ORIGINS`.
 
 Secrets are supplied via the platform's environment/secret store — **never** committed to git.
+
+**Voice calling & webhooks.** To place real calls, set `HUNAR_API_KEY` and enable live calling
+(Settings → live-calling switch, or `HUNAR_LIVE_CALLS_ENABLED=1`). Hunar delivers call
+status/result/recording/summary to `POST /webhooks/hunar`, so the backend must be reachable at a
+**public** `PUBLIC_BASE_URL` (a production domain, or a tunnel such as `cloudflared` in dev). With
+no public URL, calls still run and you can pull results on demand via "Sync from Hunar". Set
+`PLATFORM_LLM_API_KEY` (Claude) to enable JD understanding, semantic agent matching, and the
+post-call assessment (a deterministic offline stub is used otherwise). The Docker image runs
+`alembic upgrade head` on start (`RUN_MIGRATIONS=1`).
 
 ---
 
