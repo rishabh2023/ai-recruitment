@@ -54,6 +54,29 @@ def test_role_and_stage_shape_name_and_prompt():
     assert "{job_role}" in spec["introduction"]
 
 
+def test_technical_stage_interviews_on_its_success_criteria():
+    # A technical stage often has NO information_requirements — its evaluation targets are its
+    # success criteria. The agent must interview on those, with a result key per criterion.
+    intent = stage_intent(
+        job_title="Fullstack Engineer", company="Acme", stage_name="Technical Assessment",
+        information_requirements=[], purpose="Evaluate engineering competencies",
+        criteria=["Backend / API engineering", "System design", "Applied AI / LLM"],
+    )
+    spec = build_agent_spec(intent)
+    assert {"backend_api_engineering", "system_design", "applied_ai_llm"} <= set(spec["result_schema"])
+    assert "System design" in spec["agent_prompt"]
+
+
+def test_screening_stage_ignores_criteria():
+    # Screening is a facts conversation, not an evaluation — criteria are NOT turned into topics.
+    intent = stage_intent(
+        job_title="X", company="Y", stage_name="Initial Screening",
+        information_requirements=["interest"], purpose="qualify", criteria=["System design"],
+    )
+    spec = build_agent_spec(intent)
+    assert "system_design" not in spec["result_schema"]
+
+
 def test_required_create_fields_present():
     intent = stage_intent(job_title="X", company="Y", stage_name="Z", information_requirements=[])
     spec = build_agent_spec(intent)

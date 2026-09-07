@@ -93,6 +93,11 @@ _BASE_SCRIPTS = {
 }
 
 
+# Purposes whose call is an EVALUATION interview — the agent probes the stage's success criteria,
+# not just logistical fields. Screening/compensation are conversations about facts, not skills.
+_INTERVIEW_KINDS = frozenset({"technical", "manager", "sales"})
+
+
 @dataclass(frozen=True)
 class StageIntent:
     """The minimal descriptor an agent needs to understand a stage."""
@@ -102,23 +107,55 @@ class StageIntent:
     stage_name: str  # e.g. "Initial Screening"
     collect: tuple[str, ...]  # stage.information_requirements
     purpose: str = ""  # stage.purpose — the stage's own description of what it is for
+    criteria: tuple[str, ...] = ()  # stage success-criteria names (interview topics)
 
 
 def stage_intent(
-    *, job_title: str, company: str, stage_name: str, information_requirements, purpose: str = ""
+    *, job_title: str, company: str, stage_name: str, information_requirements, purpose: str = "", criteria=None
 ) -> StageIntent:
     reqs = tuple(str(k) for k in (information_requirements or []) if str(k).strip())
+    crit = tuple(str(c) for c in (criteria or []) if str(c).strip())
     return StageIntent(
         role=(job_title or "this role").strip(),
         company=(company or "our company").strip(),
         stage_name=(stage_name or "screening").strip(),
         collect=reqs,
         purpose=(purpose or "").strip(),
+        criteria=crit,
     )
 
 
 def _ask_phrase(key: str) -> str:
     return _FIELD_ASK.get(key, key.replace("_", " "))
+
+
+def _slug(name: str) -> str:
+    """A result-schema key from a criterion name, e.g. 'Backend / API engineering' -> 'backend_api_engineering'."""
+    out = []
+    for ch in name.lower().strip():
+        out.append(ch if ch.isalnum() else "_")
+    slug = "_".join(filter(None, "".join(out).split("_")))
+    return slug or "criterion"
+
+
+def stage_topics(intent: StageIntent) -> list[tuple[str, str]]:
+    """The (result_key, plain-language ask) pairs the agent should cover for this stage.
+
+    Always the stage's information_requirements. For interview-type stages (technical/manager/
+    sales), ALSO one topic per success criterion — so a technical stage actually interviews on
+    Backend/API, System design, etc. rather than reusing a screening script. De-duplicated,
+    order-preserving; falls back to a single ``interest`` topic when a stage defines nothing."""
+    topics: list[tuple[str, str]] = [(k, _ask_phrase(k)) for k in intent.collect]
+    if classify_purpose(intent.stage_name, intent.purpose) in _INTERVIEW_KINDS:
+        topics += [(_slug(c), c) for c in intent.criteria]
+    seen: set[str] = set()
+    uniq: list[tuple[str, str]] = []
+    for key, phrase in topics:
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append((key, phrase))
+    return uniq or [("interest", _ask_phrase("interest"))]
 
 
 def agent_profile(intent: StageIntent) -> dict:
@@ -128,12 +165,12 @@ def agent_profile(intent: StageIntent) -> dict:
     ``purpose_family`` (screening/technical/…), ``name``. Derived from the same generator that
     builds the Hunar spec, so it faithfully describes a freshly generated agent."""
     spec = build_agent_spec(intent)
-    collect = list(intent.collect) or ["interest"]
+    topics = stage_topics(intent)
     return {
         "name": spec["name"],
         "objective": spec["objective"],
-        "collects": [_ask_phrase(k) for k in collect],
-        "collect_keys": collect,
+        "collects": [phrase for _, phrase in topics],
+        "collect_keys": [key for key, _ in topics],
         "purpose_family": classify_purpose(intent.stage_name, intent.purpose),
     }
 
@@ -150,9 +187,11 @@ def build_agent_spec(
     `result_schema` keys are exactly the stage's collect fields (plus a free-text ``summary``),
     so extracted answers map 1:1 onto what the platform stores as evidence.
     """
-    # Always collect at least interest, so an empty-requirements stage still runs a real screen.
-    collect = list(intent.collect) or ["interest"]
-    ask_list = "; ".join(_ask_phrase(k) for k in collect)
+    # Topics = information_requirements, plus the stage's success criteria for interview stages,
+    # so a technical stage actually interviews on its criteria (never a bare screen).
+    topics = stage_topics(intent)
+    collect = [key for key, _ in topics]
+    ask_list = "; ".join(phrase for _, phrase in topics)
 
     kind = classify_purpose(intent.stage_name, intent.purpose)
     base_objective, base_body = _BASE_SCRIPTS[kind]

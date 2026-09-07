@@ -130,6 +130,29 @@ def test_match_declined_when_agent_schema_misses_required_fields(session):
     assert set(fake.created[0]["result_schema"]) >= set(stage.information_requirements or [])
 
 
+def test_screener_not_reused_for_technical_stage_with_criteria(session):
+    from app.modules.workflows.models import StageCriteria
+    org, user, job, version = _setup(session, title="Fullstack Engineer")
+    stage = _ai_stage(session, version)
+    # Make this an interview stage: no info-requirements, but success criteria to assess.
+    stage.name = "Technical Assessment"
+    stage.purpose = "Evaluate engineering competencies"
+    stage.information_requirements = []
+    for name in ("Backend / API engineering", "System design"):
+        session.add(StageCriteria(job_workflow_stage_id=stage.id, name=name, kind="numeric"))
+    session.flush()
+    # A same-role SCREENING agent exists whose schema only covers interest/logistics.
+    fake = FakeHunar(
+        agents=[{"id": "screen-1", "name": "Fullstack Engineer — Initial Screening", "status": "ACTIVE"}],
+        schemas={"screen-1": ["interest", "current_ctc", "notice_period", "summary"]},
+    )
+    svc = AgentProvisioningService(session, fake, actor_user_id=user.id)
+    agent_id, source = svc.ensure_stage_agent(stage, job_title=job.title, company=org.name, org_id=org.id)
+    # The screener lacks the technical criteria → must NOT be reused; a technical agent is created.
+    assert source == "created" and agent_id != "screen-1"
+    assert {"backend_api_engineering", "system_design"} <= set(fake.created[0]["result_schema"])
+
+
 def test_creates_agent_when_no_match(session):
     org, user, job, version = _setup(session)
     stage = _ai_stage(session, version)

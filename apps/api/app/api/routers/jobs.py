@@ -454,6 +454,7 @@ def _stage_agents_view(session: Session, version_id: UUID, *, job_title: str, co
         preview = agent_profile(stage_intent(
             job_title=job_title, company=company, stage_name=stage.name,
             information_requirements=stage.information_requirements, purpose=stage.purpose or "",
+            criteria=_criteria_names(session, stage.id),
         ))
         profile = stored or preview
         out.append(StageAgentOut(
@@ -472,6 +473,10 @@ def _stage_agents_view(session: Session, version_id: UUID, *, job_title: str, co
 def _job_title_company(session: Session, job: Job) -> tuple[str, str]:
     org = session.get(Organization, job.org_id)
     return job.title, (org.name if org else "our company")
+
+
+def _criteria_names(session: Session, stage_id: UUID) -> list[str]:
+    return list(session.scalars(select(StageCriteria.name).where(StageCriteria.job_workflow_stage_id == stage_id)))
 
 
 @router.get("/{job_id}/workflow/versions/{version_id}/agents", response_model=list[StageAgentOut])
@@ -521,6 +526,7 @@ def override_stage_agent(job_id: UUID, stage_id: UUID, body: StageAgentOverrideI
     profile = agent_profile(stage_intent(
         job_title=title, company=company, stage_name=stage.name,
         information_requirements=stage.information_requirements, purpose=stage.purpose or "",
+        criteria=_criteria_names(session, stage.id),
     ))
     session.add(HunarAgentConfig(
         job_workflow_stage_id=stage.id, hunar_agent_id=agent_id, configuration_version="override",

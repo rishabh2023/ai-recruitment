@@ -24,6 +24,7 @@ from app.integrations.hunar.agent_spec import (
     agent_profile,
     build_agent_spec,
     stage_intent,
+    stage_topics,
 )
 from app.integrations.hunar.client import HunarClient, HunarError
 from app.integrations.llm import LLMProvider, get_llm_provider
@@ -35,6 +36,7 @@ from app.modules.workflows.models import (
     JobWorkflow,
     JobWorkflowStage,
     JobWorkflowVersion,
+    StageCriteria,
 )
 
 
@@ -71,12 +73,16 @@ class AgentProvisioningService:
         if existing and (existing.hunar_agent_id or "").strip():
             return existing.hunar_agent_id, "bound"
 
+        criteria = self._s.scalars(
+            select(StageCriteria.name).where(StageCriteria.job_workflow_stage_id == stage.id)
+        ).all()
         intent = stage_intent(
             job_title=job_title,
             company=company,
             stage_name=stage.name,
             information_requirements=stage.information_requirements,
             purpose=stage.purpose or "",
+            criteria=list(criteria),
         )
 
         agent_id = self._match_existing(intent)
@@ -122,10 +128,12 @@ class AgentProvisioningService:
         if not active:
             return None
         chosen = self._match_with_llm(intent, active) or self._match_by_name(intent, active)
-        # Only reuse an agent that actually collects everything this stage requires — otherwise
-        # its result schema can't populate the candidate's evidence (e.g. a screener that lacks
-        # current_ctc/expected_ctc). A non-covering match is declined so we create a fit agent.
-        if chosen and not self._covers_requirements(chosen, intent.collect):
+        # Only reuse an agent that actually collects/assesses everything this stage needs — its
+        # information_requirements AND, for interview stages, its success criteria. This stops a
+        # screening agent being reused for a Technical Assessment (whose criteria a screener lacks)
+        # and stops evidence going unpopulated. A non-covering match is declined → create a fit one.
+        required_keys = [key for key, _ in stage_topics(intent)]
+        if chosen and not self._covers_requirements(chosen, required_keys):
             return None
         return chosen
 
