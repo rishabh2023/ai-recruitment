@@ -104,3 +104,20 @@ class UserInvite(Base):
         Index("ix_user_invites_org_id", "org_id"),
         CheckConstraint("role IN ('recruiter','hiring_manager','admin')", name="invite_role_valid"),
     )
+
+
+class AppConfig(Base):
+    """Global (non-org-scoped) key/value configuration.
+
+    A single durable store for platform-wide settings that are not per-organization. First
+    use: the Hunar voice-AI API key override (`key='hunar_api_key'`), which takes precedence
+    over the `.env` key so an admin can rotate it in-app without a redeploy. `value` may hold a
+    secret and is NEVER returned to clients.
+    """
+
+    __tablename__ = "app_config"
+
+    key = Column(Text, primary_key=True)
+    value = Column(Text)
+    updated_at = updated_at()
+    updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
