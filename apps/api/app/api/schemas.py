@@ -510,3 +510,14 @@ class EnrichOut(BaseModel):
     already_had_contact: bool
     notice: str | None
     pipeline_state: str | None
+
+
+# --- hunar ---
+class HunarHealthOut(BaseModel):
+    status: str  # healthy | invalid | unconfigured | unreachable
+    source: str | None  # override | env | None
+    checked_at: str
+
+
+class HunarKeyUpdateIn(BaseModel):
+    api_key: str

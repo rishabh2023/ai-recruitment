@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings as app_settings
 from app.modules.organizations.models import AppConfig
-from app.redis_client import cache_get, cache_set
+from app.redis_client import cache_delete, cache_get, cache_set
 
 from .client import HunarClient, HunarConfig, HunarError
 
