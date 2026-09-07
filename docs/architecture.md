@@ -115,6 +115,11 @@ organizations → jobs → workflows → candidates → interviews → webhooks 
   Abstracting hypothetical providers is premature.
 - **No deep-agent framework** — the workflow is deterministic orchestration; Hunar already
   owns the conversational agents.
+- **One voice agent per stage intent, not one global agent** — each AI funnel stage binds to a
+  Hunar agent that understands that stage's intent (role + purpose + fields to collect). A
+  matching account agent is reused, or one is created at funnel setup; the generated result
+  schema mirrors the stage's `information_requirements`. `HUNAR_DEFAULT_AGENT_ID` is a
+  last-resort fallback only. See [F-009](features/F-009-per-stage-voice-agent-provisioning.md).
 - **Small platform LLM** — only for product intelligence Hunar does not provide.
 
 ## Canonical execution model: stage-driven
