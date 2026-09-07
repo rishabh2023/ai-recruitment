@@ -7,17 +7,21 @@ result is cached in Redis. The raw key is never returned to clients.
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from app.config import settings as app_settings
-from app.modules.audit.log import write_audit
 from app.modules.organizations.models import AppConfig
+from app.redis_client import cache_get, cache_set
 
-from .client import HunarClient, HunarConfig
+from .client import HunarClient, HunarConfig, HunarError
 
 HUNAR_KEY_CONFIG = "hunar_api_key"
+HEALTH_CACHE_KEY = "hunar:health"
+HEALTH_TTL_SECONDS = 60
 
 
 def build_client(api_key: str) -> HunarClient:
@@ -51,3 +55,38 @@ def clear_override(session: Session, *, actor_user_id: UUID | None) -> None:
     if row is not None:
         session.delete(row)
         session.flush()
+
+
+def check_health(session: Session, *, refresh: bool = False) -> dict:
+    """Return the Hunar health result, served from Redis unless ``refresh``.
+
+    Probes the lightweight verified read ``GET /numbers/``. 401/403 means the key is
+    invalid/expired (re-key needed); other errors mean the provider is unreachable (transient).
+    """
+    if not refresh:
+        cached = cache_get(HEALTH_CACHE_KEY)
+        if cached:
+            try:
+                return json.loads(cached)
+            except ValueError:
+                pass
+
+    api_key, source = resolve_api_key(session)
+    if not api_key:
+        status = "unconfigured"
+    else:
+        try:
+            build_client(api_key).list_numbers()
+            status = "healthy"
+        except HunarError as exc:
+            status = "invalid" if exc.status_code in (401, 403) else "unreachable"
+
+    result = {
+        "status": status,
+        "source": source,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+    # Only cache stable outcomes; unreachable is transient, so let it re-probe next time.
+    if status != "unreachable":
+        cache_set(HEALTH_CACHE_KEY, json.dumps(result), HEALTH_TTL_SECONDS)
+    return result
