@@ -54,15 +54,25 @@ The differentiator is that **each funnel stage is backed by a voice agent that u
 stage** — the role, the stage's purpose, and exactly what it must collect or assess — instead of
 one global agent screening everyone.
 
-```
-Create job (JD)  →  LLM extracts role + drafts the funnel  →  recruiter approves
-      →  per AI stage, ensure an on-intent voice agent:
-            bound? reuse  ·  a fitting account agent? reuse (LLM semantic match)
-            ·  otherwise generate one from the stage's intent
-      →  place the Hunar call with the right agent + injected context
-      →  webhook returns the result  →  store every field as evidence
-      →  platform LLM writes an assessment (recommendation + per-criterion notes + summary)
-      →  recruiter reviews evidence and advances / rejects
+```mermaid
+flowchart TD
+    JD["Create job from JD"] --> DRAFT["LLM extracts role<br/>and drafts the funnel"]
+    DRAFT --> APPROVE["Recruiter approves"]
+    APPROVE --> NEED["For each AI stage:<br/>ensure an on-intent voice agent"]
+
+    NEED --> Q1{"Already bound?"}
+    Q1 -- yes --> USE["Use bound agent"]
+    Q1 -- no --> Q2{"Fitting account agent?<br/>LLM semantic match AND<br/>covers the stage's fields"}
+    Q2 -- yes --> BIND["Reuse it (no duplicate)"]
+    Q2 -- no --> GEN["Generate an agent from the stage intent<br/>role · purpose · criteria · fields"]
+
+    USE --> CALL["Place the Hunar call<br/>with injected context"]
+    BIND --> CALL
+    GEN --> CALL
+    CALL --> WH["Webhook returns the result"]
+    WH --> EV["Store every field as evidence"]
+    EV --> AS["Platform-LLM assessment<br/>recommendation + per-criterion notes + summary"]
+    AS --> REV["Recruiter reviews evidence<br/>and advances / rejects"]
 ```
 
 - **Reuse-or-create, coverage-aware** — an existing agent is reused only if it collects/assesses
@@ -79,6 +89,55 @@ Create job (JD)  →  LLM extracts role + drafts the funnel  →  recruiter appr
   the global default agent is a surfaced last-resort fallback only.
 
 See [`docs/features/F-009-per-stage-voice-agent-provisioning.md`](docs/features/F-009-per-stage-voice-agent-provisioning.md).
+
+---
+
+## Architecture at a glance
+
+A modular monolith: PostgreSQL is the durable source of truth, Redis + Celery run durable async
+work, **Hunar** owns the candidate-facing voice conversation, and the **platform LLM** is used only
+for product intelligence Hunar doesn't provide (JD understanding, agent matching, assessment).
+
+```mermaid
+flowchart LR
+    subgraph Clients
+        Web["Next.js console"]
+        Copilot["MCP copilot"]
+    end
+    Web --> API
+    Copilot --> API
+
+    subgraph Platform["Platform (this repo)"]
+        API["FastAPI modular monolith<br/>routers · services · migrations"]
+        Celery["Celery workers"]
+        API <--> PG[("PostgreSQL<br/>source of truth")]
+        API <--> Redis[("Redis<br/>broker · cache · dedup")]
+        Redis --- Celery
+        Celery --> API
+    end
+
+    API -->|"agents · calls"| Hunar["Hunar Voice AI"]
+    Hunar -->|"webhooks:<br/>status · result · summary"| API
+    API -->|"JD · agent matching · assessment"| LLM["Claude (platform LLM)"]
+    API -->|"people search"| Providers["Apollo · PDL ·<br/>Proxycurl · Coresignal"]
+```
+
+The candidate stage-run lifecycle (each execution of one stage for one candidate):
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING
+    PENDING --> READY
+    READY --> SCHEDULED
+    SCHEDULED --> IN_PROGRESS
+    IN_PROGRESS --> AWAITING_RESULT
+    AWAITING_RESULT --> NEEDS_REVIEW: result stored
+    NEEDS_REVIEW --> COMPLETED: recruiter advances
+    NEEDS_REVIEW --> FAILED: recruiter rejects
+    IN_PROGRESS --> FAILED: no answer / vendor error
+    FAILED --> READY: retry (fresh run)
+    COMPLETED --> [*]
+```
 
 ---
 
