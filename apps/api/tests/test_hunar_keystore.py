@@ -23,3 +23,23 @@ def test_cache_get_returns_none_when_redis_unavailable(monkeypatch):
     assert redis_client.cache_get("hunar:health") is None
     redis_client.cache_set("hunar:health", "x", 60)  # no-op, no raise
     redis_client.cache_delete("hunar:health")  # no-op, no raise
+
+
+def test_resolve_prefers_override_then_env(session, monkeypatch):
+    from app.config import settings as app_settings
+    from app.integrations.hunar import keystore
+    from app.modules.organizations.models import AppConfig
+
+    # No override, env set -> env.
+    monkeypatch.setattr(app_settings, "hunar_api_key", "env-key", raising=False)
+    assert keystore.resolve_api_key(session) == ("env-key", "env")
+
+    # No override, no env -> empty/None.
+    monkeypatch.setattr(app_settings, "hunar_api_key", "", raising=False)
+    assert keystore.resolve_api_key(session) == ("", None)
+
+    # Override present -> override wins over env.
+    session.add(AppConfig(key=keystore.HUNAR_KEY_CONFIG, value="override-key"))
+    session.flush()
+    monkeypatch.setattr(app_settings, "hunar_api_key", "env-key", raising=False)
+    assert keystore.resolve_api_key(session) == ("override-key", "override")
