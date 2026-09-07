@@ -40,6 +40,11 @@ export type AuditLogItem = {
   created_at: string;
 };
 export type AuditPageResult = { items: AuditLogItem[]; total: number; page: number; page_size: number };
+export type HunarHealth = {
+  status: "healthy" | "invalid" | "unconfigured" | "unreachable";
+  source: "override" | "env" | null;
+  checked_at: string;
+};
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
@@ -214,6 +219,10 @@ export const api = {
   getSettings: () => req<Settings>("/settings"),
   updateSettings: (patch: SettingsUpdate) =>
     req<Settings>("/settings", { method: "PUT", body: JSON.stringify(patch) }),
+  getHunarHealth: (refresh = false) =>
+    req<HunarHealth>(`/hunar/health${refresh ? "?refresh=1" : ""}`),
+  updateHunarKey: (apiKey: string) =>
+    req<HunarHealth>("/hunar/key", { method: "PUT", body: JSON.stringify({ api_key: apiKey }) }),
 
   // team invites
   createInvite: (input: { email: string; role: string; name?: string }) =>
